@@ -1,0 +1,45 @@
+map[app_base_path: app_basic_auth:user1:pass1,user2:pass2 app_debug:false app_host:0.0.0.0 app_os:Chrome app_port:3000 app_trusted_proxies:0.0.0.0/0 db_keys_uri:file::memory:?cache=shared&_pragma=foreign_keys(1) db_uri:file:storages/whatsapp.db?_pragma=foreign_keys(1) whatsapp_account_validation:true whatsapp_auto_download_media:true whatsapp_auto_mark_read:false whatsapp_auto_reply:Auto reply message whatsapp_chat_storage:true whatsapp_webhook:https://webhook.site/07b69616-5943-4c7f-a8be-db4819df699e,https://webhook.site/09a38aff-d11a-4a38-a176-3f3efa0b5e8b whatsapp_webhook_events:message,message.reaction,message.revoked,message.edited,message.ack,group.participants whatsapp_webhook_insecure_skip_verify:false whatsapp_webhook_secret:super-secret-key]
+06:51:02.184[31m [Client ERROR] Failed to sync app state after notification: failed to decode app state regular_high patches: failed to get key 001800003B1C to verify patch v800 MACs: didn't find app state key[0m
+[ERROR] 2026-01-09T06:51:02Z SessionCipher.go:316 ▶  Unable to verify ciphertext mac: mismatching MAC in signal message
+[WARNING] 2026-01-09T06:51:02Z SessionCipher.go:260 ▶  failed to verify ciphertext MAC: mismatching MAC in signal message
+06:51:02.890[31m [Client ERROR] Failed to sync app state after notification: failed to decode app state regular_high patches: failed to get key 001800003B1C to verify patch v800 MACs: didn't find app state key[0m
+[ERROR] 2026-01-09T06:51:05Z SessionCipher.go:316 ▶  Unable to verify ciphertext mac: mismatching MAC in signal message
+[WARNING] 2026-01-09T06:51:05Z SessionCipher.go:260 ▶  failed to verify ciphertext MAC: mismatching MAC in signal message
+[ERROR] 2026-01-09T06:51:05Z SessionCipher.go:316 ▶  Unable to verify ciphertext mac: mismatching MAC in signal message
+[WARNING] 2026-01-09T06:51:05Z SessionCipher.go:260 ▶  failed to verify ciphertext MAC: mismatching MAC in signal message
+[ERROR] 2026-01-09T06:51:05Z SessionCipher.go:316 ▶  Unable to verify ciphertext mac: mismatching MAC in signal message
+[WARNING] 2026-01-09T06:51:05Z SessionCipher.go:260 ▶  failed to verify ciphertext MAC: mismatching MAC in signal message
+[ERROR] 2026-01-09T06:51:05Z SessionCipher.go:316 ▶  Unable to verify ciphertext mac: mismatching MAC in signal message
+[WARNING] 2026-01-09T06:51:05Z SessionCipher.go:260 ▶  failed to verify ciphertext MAC: mismatching MAC in signal message
+[ERROR] 2026-01-09T06:51:05Z SessionCipher.go:316 ▶  Unable to verify ciphertext mac: mismatching MAC in signal message
+[WARNING] 2026-01-09T06:51:05Z SessionCipher.go:260 ▶  failed to verify ciphertext MAC: mismatching MAC in signal message
+[ERROR] 2026-01-09T06:51:05Z SessionCipher.go:316 ▶  Unable to verify ciphertext mac: mismatching MAC in signal message
+[WARNING] 2026-01-09T06:51:05Z SessionCipher.go:260 ▶  failed to verify ciphertext MAC: mismatching MAC in signal message
+[ERROR] 2026-01-09T06:51:05Z SessionCipher.go:316 ▶  Unable to verify ciphertext mac: mismatching MAC in signal message
+[WARNING] 2026-01-09T06:51:05Z SessionCipher.go:260 ▶  failed to verify ciphertext MAC: mismatching MAC in signal message
+[ERROR] 2026-01-09T06:51:05Z SessionCipher.go:316 ▶  Unable to verify ciphertext mac: mismatching MAC in signal message
+[WARNING] 2026-01-09T06:51:05Z SessionCipher.go:260 ▶  failed to verify ciphertext MAC: mismatching MAC in signal message
+[ERROR] 2026-01-09T06:51:05Z SessionCipher.go:316 ▶  Unable to verify ciphertext mac: mismatching MAC in signal message
+[WARNING] 2026-01-09T06:51:05Z SessionCipher.go:260 ▶  failed to verify ciphertext MAC: mismatching MAC in signal message
+[ERROR] 2026-01-09T06:51:05Z SessionCipher.go:316 ▶  Unable to verify ciphertext mac: mismatching MAC in signal message
+[WARNING] 2026-01-09T06:51:05Z SessionCipher.go:260 ▶  failed to verify ciphertext MAC: mismatching MAC in signal message
+[ERROR] 2026-01-09T06:51:05Z SessionCipher.go:316 ▶  Unable to verify ciphertext mac: mismatching MAC in signal message
+[WARNING] 2026-01-09T06:51:05Z SessionCipher.go:260 ▶  failed to verify ciphertext MAC: mismatching MAC in signal message
+[ERROR] 2026-01-09T06:51:05Z SessionCipher.go:316 ▶  Unable to verify ciphertext mac: mismatching MAC in signal message
+[WARNING] 2026-01-09T06:51:05Z SessionCipher.go:260 ▶  failed to verify ciphertext MAC: mismatching MAC in signal message
+[ERROR] 2026-01-09T06:51:05Z SessionCipher.go:316 ▶  Unable to verify ciphertext mac: mismatching MAC in signal message
+[WARNING] 2026-01-09T06:51:05Z SessionCipher.go:260 ▶  failed to verify ciphertext MAC: mismatching MAC in signal message
+[ERROR] 2026-01-09T06:51:06Z SessionCipher.go:316 ▶  Unable to verify ciphertext mac: mismatching MAC in signal message
+[WARNING] 2026-01-09T06:51:06Z SessionCipher.go:260 ▶  failed to verify ciphertext MAC: mismatching MAC in signal message
+[ERROR] 2026-01-09T06:51:06Z SessionCipher.go:316 ▶  Unable to verify ciphertext mac: mismatching MAC in signal message
+[WARNING] 2026-01-09T06:51:06Z SessionCipher.go:260 ▶  failed to verify ciphertext MAC: mismatching MAC in signal message
+[ERROR] 2026-01-09T06:51:06Z SessionCipher.go:316 ▶  Unable to verify ciphertext mac: mismatching MAC in signal message
+[WARNING] 2026-01-09T06:51:06Z SessionCipher.go:260 ▶  failed to verify ciphertext MAC: mismatching MAC in signal message
+[ERROR] 2026-01-09T06:51:06Z SessionCipher.go:316 ▶  Unable to verify ciphertext mac: mismatching MAC in signal message
+[WARNING] 2026-01-09T06:51:06Z SessionCipher.go:260 ▶  failed to verify ciphertext MAC: mismatching MAC in signal message
+[ERROR] 2026-01-09T06:51:06Z SessionCipher.go:316 ▶  Unable to verify ciphertext mac: mismatching MAC in signal message
+[WARNING] 2026-01-09T06:51:06Z SessionCipher.go:260 ▶  failed to verify ciphertext MAC: mismatching MAC in signal message
+[ERROR] 2026-01-09T06:51:06Z SessionCipher.go:316 ▶  Unable to verify ciphertext mac: mismatching MAC in signal message
+[WARNING] 2026-01-09T06:51:06Z SessionCipher.go:260 ▶  failed to verify ciphertext MAC: mismatching MAC in signal message
+[ERROR] 2026-01-09T06:56:10Z SessionCipher.go:316 ▶  Unable to verify ciphertext mac: mismatching MAC in signal message
+[WARNING] 2026-01-09T06:56:10Z SessionCipher.go:260 ▶  failed to verify ciphertext MAC: mismatching MAC in signal message

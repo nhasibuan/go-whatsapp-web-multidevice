@@ -28,7 +28,7 @@ func InitWaDB(ctx context.Context, DBURI string) *sqlstore.Container {
 // initDatabase creates and returns a database store container based on the configured URI
 func initDatabase(ctx context.Context, dbLog waLog.Logger, DBURI string) (*sqlstore.Container, error) {
 	if strings.HasPrefix(DBURI, "file:") {
-		return sqlstore.New(ctx, "sqlite3", DBURI, dbLog)
+		return sqlstore.New(ctx, "sqlite", DBURI, dbLog)
 	} else if strings.HasPrefix(DBURI, "postgres:") {
 		return sqlstore.New(ctx, "postgres", DBURI, dbLog)
 	}
