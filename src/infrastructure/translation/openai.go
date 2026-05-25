@@ -15,7 +15,10 @@ import (
 
 // PromptVersion bumps when the system prompt or schema changes. Persisted in
 // the cache so a prompt change doesn't poison old rows.
-const PromptVersion = "v1"
+//
+// v1 — initial 3-variant JSON output with thread context only.
+// v2 — adds support for user-style examples (RAG) in the user prompt.
+const PromptVersion = "v2"
 
 // OpenAIProvider calls the OpenAI Chat Completions API with structured JSON
 // output to get all 3 suggestions in a single round-trip.
@@ -224,6 +227,7 @@ func buildSystemPrompt(targetLang string) string {
 		"`literal` should be a faithful word-for-word translation.",
 		"`natural` should be the most idiomatic translation a native speaker would write.",
 		"`tone_matched` should match the register, slang, and emoji usage of the surrounding chat context.",
+		"If 'User's writing style examples' are provided, lean the tone_matched variant toward that user's voice (vocabulary, contractions, punctuation, emoji habits) — but still translate into the target language.",
 		"Keep names, @mentions, URLs, and emoji unchanged. Do not include any prose outside the JSON.",
 	}, "\n")
 }
@@ -245,6 +249,17 @@ func buildUserPrompt(in domainTranslation.ProviderRequest) string {
 				continue
 			}
 			fmt.Fprintf(&b, "- %s: %s\n", who, line)
+		}
+		b.WriteString("\n")
+	}
+	if len(in.StyleExamples) > 0 {
+		b.WriteString("User's writing style examples (their own past messages):\n")
+		for _, ex := range in.StyleExamples {
+			line := strings.ReplaceAll(strings.TrimSpace(ex), "\n", " ")
+			if line == "" {
+				continue
+			}
+			fmt.Fprintf(&b, "- %s\n", line)
 		}
 		b.WriteString("\n")
 	}

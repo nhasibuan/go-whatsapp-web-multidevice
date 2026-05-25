@@ -73,4 +73,24 @@ var (
 	TranslationContextWindow     = 20           // recent messages used to condition the translation
 	TranslationCacheEnabled      = true         // dedupe identical requests via the message_translations table
 	TranslationTimeoutSeconds    = 30           // HTTP timeout for the provider call
+
+	// Translation RAG (Phase 3) — semantic retrieval over per-chat history
+	// and the user's own outbound messages. Off by default; turning it on
+	// requires an embeddings-capable API key (the same OpenAI key works).
+	//
+	// When enabled, each translate call:
+	//   1. Embeds the source text (one extra ~$0.00001 round-trip),
+	//   2. Retrieves top-K from a bounded per-chat pool and a user-style pool,
+	//   3. Lazily backfills any unindexed messages in the chat in background.
+	//
+	// Falls back gracefully to the Phase 1 system-context path when retrieval
+	// returns empty (e.g. brand-new chat) or when any RAG dependency errors.
+	TranslationRAGEnabled        = false
+	TranslationEmbeddingModel    = "text-embedding-3-small" // 1536-D, cost-effective default
+	TranslationRAGPerChatPool    = 200                      // recent messages from the same chat scored per call
+	TranslationRAGStylePool      = 500                      // recent user outbound messages scored per call (across all chats)
+	TranslationRAGPerChatK       = 8                        // top-K per-chat exemplars fed to the prompt
+	TranslationRAGStyleK         = 4                        // top-K user-style exemplars fed to the prompt
+	TranslationRAGBackfillLimit  = 100                      // max messages embedded per lazy backfill burst
+	TranslationRAGBackfillBatch  = 32                       // messages embedded per OpenAI batch call
 )

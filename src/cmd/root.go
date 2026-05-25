@@ -205,6 +205,32 @@ func initEnvConfig() {
 	if viper.IsSet("translation_timeout_seconds") {
 		config.TranslationTimeoutSeconds = viper.GetInt("translation_timeout_seconds")
 	}
+
+	// Translation RAG (Phase 3) settings
+	if viper.IsSet("translation_rag_enabled") {
+		config.TranslationRAGEnabled = viper.GetBool("translation_rag_enabled")
+	}
+	if v := viper.GetString("translation_embedding_model"); v != "" {
+		config.TranslationEmbeddingModel = v
+	}
+	if viper.IsSet("translation_rag_per_chat_pool") {
+		config.TranslationRAGPerChatPool = viper.GetInt("translation_rag_per_chat_pool")
+	}
+	if viper.IsSet("translation_rag_style_pool") {
+		config.TranslationRAGStylePool = viper.GetInt("translation_rag_style_pool")
+	}
+	if viper.IsSet("translation_rag_per_chat_k") {
+		config.TranslationRAGPerChatK = viper.GetInt("translation_rag_per_chat_k")
+	}
+	if viper.IsSet("translation_rag_style_k") {
+		config.TranslationRAGStyleK = viper.GetInt("translation_rag_style_k")
+	}
+	if viper.IsSet("translation_rag_backfill_limit") {
+		config.TranslationRAGBackfillLimit = viper.GetInt("translation_rag_backfill_limit")
+	}
+	if viper.IsSet("translation_rag_backfill_batch") {
+		config.TranslationRAGBackfillBatch = viper.GetInt("translation_rag_backfill_batch")
+	}
 }
 
 func initFlags() {
@@ -433,6 +459,7 @@ func initApp() {
 	// configured — the usecase reports a clear error in that case rather than
 	// blocking app boot.
 	var translationProvider domainTranslation.Provider
+	var translationEmbedProvider domainTranslation.EmbeddingProvider
 	if config.TranslationEnabled && strings.EqualFold(config.TranslationProvider, "openai") && config.TranslationOpenAIAPIKey != "" {
 		translationProvider = infraTranslation.NewOpenAIProvider(infraTranslation.OpenAIConfig{
 			APIKey:  config.TranslationOpenAIAPIKey,
@@ -440,9 +467,20 @@ func initApp() {
 			BaseURL: config.TranslationOpenAIBaseURL,
 			Timeout: time.Duration(config.TranslationTimeoutSeconds) * time.Second,
 		})
+		// RAG reuses the same API key. We build the embedding provider only
+		// when RAG is also enabled so the OpenAI client isn't initialized
+		// for users who don't opt in.
+		if config.TranslationRAGEnabled {
+			translationEmbedProvider = infraTranslation.NewOpenAIEmbeddingProvider(infraTranslation.OpenAIEmbeddingConfig{
+				APIKey:  config.TranslationOpenAIAPIKey,
+				Model:   config.TranslationEmbeddingModel,
+				BaseURL: config.TranslationOpenAIBaseURL,
+				Timeout: time.Duration(config.TranslationTimeoutSeconds) * time.Second,
+			})
+		}
 	}
 	translationRepo := infraTranslation.NewSQLiteRepository(chatStorageDB)
-	translationUsecase = usecase.NewTranslationService(chatStorageRepo, translationRepo, translationProvider)
+	translationUsecase = usecase.NewTranslationService(chatStorageRepo, translationRepo, translationProvider, translationEmbedProvider)
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.

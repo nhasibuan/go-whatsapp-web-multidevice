@@ -82,3 +82,24 @@ type MessageEmbedding struct {
 	Vector    []float32
 	CreatedAt time.Time
 }
+
+// EmbeddedMessage is a hydrated row that joins message_embeddings with the
+// underlying message text. Used by retrieval helpers so the usecase can score
+// against the vector and still have the original content for the prompt.
+type EmbeddedMessage struct {
+	MessageID string
+	ChatJID   string
+	Sender    string
+	Content   string
+	IsFromMe  bool
+	Vector    []float32
+	Timestamp time.Time
+}
+
+// MessageEmbeddingTarget identifies a message that needs to be embedded.
+// Returned by the repository to drive the lazy backfill worker.
+type MessageEmbeddingTarget struct {
+	MessageID string
+	ChatJID   string
+	Content   string
+}

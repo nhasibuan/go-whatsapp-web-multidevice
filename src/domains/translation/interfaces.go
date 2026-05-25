@@ -26,6 +26,22 @@ type ITranslationRepository interface {
 	// Embeddings (Phase 3)
 	SaveEmbedding(emb *MessageEmbedding) error
 	GetEmbedding(deviceID, messageID, chatJID, model string) (*MessageEmbedding, error)
+
+	// ListEmbeddingsByChat returns recent embedded messages for a single chat,
+	// limited to `limit` entries newest-first by created_at. Used for per-chat
+	// retrieval in the RAG pipeline.
+	ListEmbeddingsByChat(deviceID, chatJID, model string, limit int) ([]*EmbeddedMessage, error)
+
+	// ListUserStyleEmbeddings returns embedded messages the user wrote
+	// themselves (is_from_me = true), across all chats, limited to `limit`
+	// entries newest-first. Provides the "user style" pool that powers the
+	// tone_matched suggestion variant.
+	ListUserStyleEmbeddings(deviceID, model string, limit int) ([]*EmbeddedMessage, error)
+
+	// ListMessageIDsMissingEmbedding returns message IDs from a chat that have
+	// text content but no embedding row for the given model. Used by the lazy
+	// backfill worker to know what to embed next.
+	ListMessageIDsMissingEmbedding(deviceID, chatJID, model string, limit int) ([]MessageEmbeddingTarget, error)
 }
 
 // Provider abstracts the external translation backend (OpenAI, etc.).
@@ -33,6 +49,19 @@ type ITranslationRepository interface {
 type Provider interface {
 	Name() string
 	GenerateSuggestions(ctx context.Context, in ProviderRequest) ([]Suggestion, error)
+}
+
+// EmbeddingProvider abstracts an embeddings backend. A single batched call
+// returns one vector per input string. Implementations live in
+// infrastructure/translation/*.
+type EmbeddingProvider interface {
+	// Model identifies the embedding model in use (e.g. "text-embedding-3-small").
+	// Persisted with each row so vectors stay isolated by model.
+	Model() string
+
+	// Embed turns a slice of texts into vectors of identical length. The
+	// returned slice has the same length and order as the input.
+	Embed(ctx context.Context, texts []string) ([][]float32, error)
 }
 
 // ContextMessage is one prior message used to condition the translation. The
@@ -50,4 +79,7 @@ type ProviderRequest struct {
 	SourceLang string // optional, "" means autodetect
 	TargetLang string
 	Context    []ContextMessage
+	// StyleExamples are short exemplars of the user's own writing in the
+	// target language, used to bias the tone_matched variant. Optional.
+	StyleExamples []string
 }
