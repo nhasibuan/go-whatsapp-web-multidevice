@@ -1783,5 +1783,64 @@ func (r *SQLiteRepository) getMigrations() []string {
 
 		// Migration 22: Index edit history by edit time
 		`CREATE INDEX IF NOT EXISTS idx_message_edits_edited_at ON message_edits(edited_at)`,
+
+		// Migration 23: Translation cache. Append-only schema; rows are deleted
+		// when expired but never altered in place. Source text is identified by
+		// its sha256 hash so edited messages don't return stale translations.
+		`CREATE TABLE IF NOT EXISTS message_translations (
+			device_id VARCHAR(255) NOT NULL DEFAULT '',
+			chat_jid VARCHAR(255) NOT NULL DEFAULT '',
+			message_id VARCHAR(255) NOT NULL DEFAULT '',
+			target_lang VARCHAR(16) NOT NULL,
+			source_lang VARCHAR(16) NOT NULL DEFAULT '',
+			source_hash VARCHAR(64) NOT NULL,
+			provider VARCHAR(64) NOT NULL,
+			suggestions TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (device_id, chat_jid, message_id, target_lang, source_hash, provider)
+		)`,
+
+		// Migration 24: Per-chat translation preferences (target language, opt-in flags).
+		`CREATE TABLE IF NOT EXISTS chat_translation_prefs (
+			device_id VARCHAR(255) NOT NULL DEFAULT '',
+			chat_jid VARCHAR(255) NOT NULL,
+			target_lang VARCHAR(16) NOT NULL DEFAULT '',
+			auto_translate BOOLEAN NOT NULL DEFAULT FALSE,
+			translation_opt_in BOOLEAN NOT NULL DEFAULT FALSE,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY (device_id, chat_jid)
+		)`,
+
+		// Migration 25: Staged for Phase 3 (RAG). Vector is stored as raw bytes
+		// (float32 little-endian) so the table is portable across SQLite/Postgres
+		// without requiring sqlite-vec. The table is created now so the migration
+		// is once-and-done — backfill is wired in a later phase.
+		`CREATE TABLE IF NOT EXISTS message_embeddings (
+			device_id VARCHAR(255) NOT NULL DEFAULT '',
+			chat_jid VARCHAR(255) NOT NULL DEFAULT '',
+			message_id VARCHAR(255) NOT NULL,
+			model VARCHAR(128) NOT NULL,
+			vector BLOB NOT NULL,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (device_id, message_id, model)
+		)`,
+
+		// Migration 26: Phase 3 (RAG) JSON-encoded vector column. A 1536-D
+		// float32 vector is ~10KB text-encoded — fine for a prototype and
+		// portable across SQLite/MySQL/Postgres without vector extensions.
+		// The legacy BLOB column from Migration 25 stays in place so existing
+		// rows keep working; new writes populate vector_json. If the JSON
+		// payload size ever bites we can swap to BLOB or sqlite-vec without
+		// changing the row layout.
+		`ALTER TABLE message_embeddings ADD COLUMN vector_json TEXT NOT NULL DEFAULT ''`,
+
+		// Migration 27: Index supporting the chat-similarity retrieval pool —
+		// "give me the N most recent embeddings for (device, chat, model)".
+		`CREATE INDEX IF NOT EXISTS idx_message_embeddings_chat_lookup ON message_embeddings(device_id, chat_jid, model, created_at)`,
+
+		// Migration 28: Index supporting the user-style retrieval pool —
+		// "give me the N most recent embeddings the user authored".
+		`CREATE INDEX IF NOT EXISTS idx_message_embeddings_device_model ON message_embeddings(device_id, model, created_at)`,
 	}
 }

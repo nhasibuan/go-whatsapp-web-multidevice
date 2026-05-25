@@ -54,6 +54,10 @@ func mcpServer(_ *cobra.Command, _ []string) {
 	groupHandler := mcp.InitMcpGroup(groupUsecase)
 	groupHandler.AddGroupTools(mcpServer)
 
+	translationHandler := mcp.InitMcpTranslation(translationUsecase)
+	translationHandler.AddTranslationTools(mcpServer)
+	translationHandler.AddPrefsTools(mcpServer)
+
 	// Create SSE server
 	sseServer := server.NewSSEServer(
 		mcpServer,

@@ -1,5 +1,21 @@
+import TranslationSuggestionCard from "./generic/TranslationSuggestionCard.js";
+import TranslationSettingsPanel from "./generic/TranslationSettingsPanel.js";
+import translationMixin from "./generic/translationMixin.js";
+import TranslationApi from "./generic/TranslationApi.js";
+import {
+    TRANSLATION_LANGUAGES,
+    languageLabel,
+    loadStoredTargetLang,
+    storeTargetLang,
+} from "./generic/TranslationLanguages.js";
+
 export default {
   name: "ChatMessages",
+  components: {
+    TranslationSuggestionCard,
+    TranslationSettingsPanel,
+  },
+  mixins: [translationMixin],
   data() {
     return {
       jid: "",
@@ -19,6 +35,30 @@ export default {
       mediaDownloadErrors: {}, // messageId -> error message
       maxConcurrentDownloads: 3,
       currentDownloads: 0,
+      // Translation state
+      // Language list is shared with SendMessage and any future translation
+      // surface so a new language only needs to be added once.
+      translationLanguages: TRANSLATION_LANGUAGES,
+      translationTargetLang: loadStoredTargetLang(),
+      translationsByMessage: {}, // messageId -> { suggestions, target_lang, source_text, provider, cached, loading, error }
+      activeTranslationMessageId: null,
+      // ---- Phase 4: per-chat preferences and auto-translate inbound ----
+      // chatPrefs is the persisted row + effective_target_lang (the value
+      // actually used after fallback to the global default). Always loaded
+      // alongside the messages so the panel can render without 404 handling.
+      chatPrefs: null,
+      chatPrefsLoading: false,
+      chatPrefsSaving: false,
+      showTranslationPanel: false,
+      // autoTranslations stores the auto-fetched "natural" suggestion per
+      // message id. Rendered as a small inline accent panel under each
+      // inbound bubble so the user gets a translation without clicking.
+      autoTranslations: {},      // messageId -> { text, target_lang, provider }
+      // Re-render guard: prevents Vue's reactive updates from re-firing the
+      // same per-message calls during a single load. The translation cache
+      // makes the system correct even without this latch — the latch keeps
+      // the network panel clean and avoids burst noise on slower providers.
+      autoTranslateBatchInFlight: false,
     };
   },
   computed: {
@@ -100,6 +140,11 @@ export default {
         } else {
           // Auto-download media for loaded messages
           this.downloadAllMediaInMessages();
+          // Phase 4: pull prefs and (if auto-translate-inbound is on)
+          // prefetch translations for inbound text bubbles. Both calls are
+          // best-effort — failures degrade silently to manual-translate UX.
+          await this.loadChatPrefs();
+          this.maybeAutoTranslateInbound();
         }
       } catch (error) {
         showErrorInfo(
@@ -140,6 +185,13 @@ export default {
       this.downloadingMedia.clear();
       this.mediaDownloadErrors = {};
       this.currentDownloads = 0;
+      // Reset translation state
+      this.translationsByMessage = {};
+      this.activeTranslationMessageId = null;
+      this.chatPrefs = null;
+      this.showTranslationPanel = false;
+      this.autoTranslations = {};
+      this.autoTranslateBatchInFlight = false;
     },
     formatTimestamp(timestamp) {
       if (!timestamp) return "N/A";
@@ -410,6 +462,213 @@ export default {
       // Start processing
       processQueue();
     },
+    // Translation helpers
+    onTranslationLanguageChange() {
+      // Persist user pref so it survives reloads/modal reopens.
+      storeTargetLang(this.translationTargetLang);
+      // If a panel is open, retranslate so the user sees the new language immediately.
+      if (this.activeTranslationMessageId) {
+        const message = this.messages.find(m => m.id === this.activeTranslationMessageId);
+        if (message) this.fetchTranslation(message);
+      }
+    },
+    isTranslationOpen(messageId) {
+      return this.activeTranslationMessageId === messageId;
+    },
+    isTranslationLoading(messageId) {
+      const t = this.translationsByMessage[messageId];
+      return !!(t && t.loading);
+    },
+    getTranslation(messageId) {
+      return this.translationsByMessage[messageId] || null;
+    },
+    async toggleTranslation(message) {
+      if (!message || !message.id) return;
+      const messageId = message.id;
+      if (this.activeTranslationMessageId === messageId) {
+        this.activeTranslationMessageId = null;
+        return;
+      }
+      this.activeTranslationMessageId = messageId;
+
+      const existing = this.translationsByMessage[messageId];
+      // Re-fetch when target language changed since last call.
+      if (existing && existing.target_lang === this.translationTargetLang && Array.isArray(existing.suggestions) && existing.suggestions.length > 0) {
+        return;
+      }
+      await this.fetchTranslation(message);
+    },
+    async fetchTranslation(message) {
+      const messageId = message.id;
+      // Initialize loading state without losing previous suggestions.
+      this.translationsByMessage = {
+        ...this.translationsByMessage,
+        [messageId]: {
+          ...(this.translationsByMessage[messageId] || {}),
+          loading: true,
+          error: '',
+        },
+      };
+      try {
+        const result = await TranslationApi.translateMessage(messageId, {
+          chat_jid: this.formattedJid,
+          target_lang: (this.translationTargetLang || 'en').trim(),
+        }) || {};
+        this.translationsByMessage = {
+          ...this.translationsByMessage,
+          [messageId]: {
+            suggestions: result.suggestions || [],
+            target_lang: result.target_lang || (this.translationTargetLang || 'en').trim(),
+            source_text: result.source_text || '',
+            provider: result.provider || '',
+            cached: !!result.cached,
+            loading: false,
+            error: '',
+          },
+        };
+      } catch (err) {
+        const msg = err?.response?.data?.message || err?.message || 'Translation failed';
+        this.translationsByMessage = {
+          ...this.translationsByMessage,
+          [messageId]: {
+            ...(this.translationsByMessage[messageId] || {}),
+            loading: false,
+            error: msg,
+          },
+        };
+        showErrorInfo(msg);
+      }
+    },
+    async copyTranslationText(text) {
+    // variantLabel / variantColor / copyTranslationText come from translationMixin.
+    // ---- Phase 4: per-chat translation preferences ----
+    toggleTranslationPanel() {
+      this.showTranslationPanel = !this.showTranslationPanel;
+    },
+    effectiveTargetLangLabel() {
+      const lang = this.chatPrefs?.effective_target_lang || this.translationTargetLang || 'en';
+      return languageLabel(lang);
+    },
+    chatPrefsTargetSelection() {
+      // Empty string is the canonical "use global default" value. The
+      // dropdown shows it as a sentinel option so the user can clear an override.
+      return this.chatPrefs?.target_lang || '';
+    },
+    onPrefsUpdate(patch) {
+      // Bridge from the reusable settings panel to our internal updater.
+      // Lang changes also trigger an auto-translate refresh because the
+      // existing display batch is keyed off the previous language.
+      if (patch && Object.prototype.hasOwnProperty.call(patch, 'target_lang')) {
+        this.autoTranslations = {};
+        this.updateChatPrefs(patch).then(() => this.maybeAutoTranslateInbound());
+        return;
+      }
+      if (patch && Object.prototype.hasOwnProperty.call(patch, 'auto_translate_inbound')) {
+        const checked = !!patch.auto_translate_inbound;
+        this.updateChatPrefs(patch).then(() => {
+          if (checked) this.maybeAutoTranslateInbound();
+          else this.autoTranslations = {};
+        });
+        return;
+      }
+      this.updateChatPrefs(patch);
+    },
+    async loadChatPrefs() {
+      if (!this.formattedJid) return;
+      this.chatPrefsLoading = true;
+      try {
+        this.chatPrefs = await TranslationApi.getChatPrefs(this.formattedJid);
+      } catch (err) {
+        // Failing to load prefs shouldn't block the message UI — log and
+        // fall back to global defaults inferred from translationTargetLang.
+        const status = err?.response?.status;
+        if (status && status !== 200) {
+          console.warn('[chat-prefs] load failed', err?.response?.data?.message || err.message);
+        }
+        this.chatPrefs = null;
+      } finally {
+        this.chatPrefsLoading = false;
+      }
+    },
+    async updateChatPrefs(patch) {
+      // Partial-update wrapper: only the keys present in `patch` go on the
+      // wire. The server validates that at least one field is set.
+      if (!this.formattedJid) return;
+      this.chatPrefsSaving = true;
+      try {
+        const updated = await TranslationApi.setChatPrefs(this.formattedJid, patch);
+        this.chatPrefs = updated || this.chatPrefs;
+        showSuccessInfo('Translation settings saved');
+      } catch (err) {
+        showErrorInfo(err?.response?.data?.message || err?.message || 'Failed to save settings');
+      } finally {
+        this.chatPrefsSaving = false;
+      }
+    },
+    isInboundTextMessage(message) {
+      if (!message || !message.id) return false;
+      if (message.is_from_me) return false;
+      // Skip non-text bubbles — translating "[IMAGE]" is just noise.
+      const content = (message.content || message.text || message.caption || '').trim();
+      if (!content) return false;
+      const mediaType = (message.media_type || '').toLowerCase();
+      if (mediaType && mediaType !== 'text' && mediaType !== '') return false;
+      return true;
+    },
+    async maybeAutoTranslateInbound() {
+      // Gate on the persisted toggle so the prefetch only runs when the
+      // user actually opted in. The in-flight latch prevents Vue
+      // re-renders from re-firing the same per-message calls.
+      if (!this.chatPrefs?.auto_translate_inbound) return;
+      if (this.autoTranslateBatchInFlight) return;
+      const candidates = this.messages.filter(this.isInboundTextMessage);
+      if (candidates.length === 0) return;
+
+      this.autoTranslateBatchInFlight = true;
+      try {
+        // Concurrency cap of 3 keeps the dev network panel manageable and
+        // mirrors the same back-pressure shape used for media downloads.
+        const queue = candidates.slice();
+        const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
+          while (queue.length > 0) {
+            const message = queue.shift();
+            if (!message) break;
+            if (this.autoTranslations[message.id]) continue;
+            await this.fetchAutoTranslation(message);
+          }
+        });
+        await Promise.all(workers);
+      } finally {
+        this.autoTranslateBatchInFlight = false;
+      }
+    },
+    async fetchAutoTranslation(message) {
+      // The cache-key on the server side dedupes by message+target_lang so
+      // a re-run after a second loadMessages call is essentially free.
+      try {
+        const result = await TranslationApi.translateMessage(message.id, {
+          chat_jid: this.formattedJid,
+          target_lang: (this.chatPrefs?.effective_target_lang || this.translationTargetLang || 'en').trim(),
+        }) || {};
+        const natural = (result.suggestions || []).find(s => s.variant === 'natural')
+                     || (result.suggestions || [])[0];
+        if (!natural) return;
+        // Mutate via spread so Vue picks up the change cheaply without a
+        // deep-watch on every individual message.
+        this.autoTranslations = {
+          ...this.autoTranslations,
+          [message.id]: {
+            text: natural.text,
+            target_lang: result.target_lang,
+            provider: result.provider,
+          },
+        };
+      } catch (err) {
+        // Quietly skip failures — the user can still click the globe to
+        // retry per-message. Don't toast every failed inbound translate.
+        console.warn('[auto-translate] failed for', message.id, err?.response?.data?.message || err.message);
+      }
+    },
     backToChatList() {
       // Close current modal
       $('#modalChatMessages').modal('hide');
@@ -472,6 +731,12 @@ export default {
         <div class="header">
             <i class="comment icon"></i>
             Chat Messages
+            <span v-if="chatPrefs && chatPrefs.effective_target_lang"
+                  class="ui small horizontal label"
+                  style="margin-left: 0.5em;"
+                  :title="'Translations are rendered into ' + effectiveTargetLangLabel()">
+                <i class="globe icon"></i> {{ effectiveTargetLangLabel() }}
+            </span>
         </div>
         <div class="content">
             <div class="ui form">
@@ -482,6 +747,30 @@ export default {
                            v-model="jid">
                 </div>
                 
+                <div class="ui accordion">
+                    <div class="title">
+                        <i class="dropdown icon"></i>
+                        Translation Settings (Optional)
+                    </div>
+                    <div class="content">
+                        <div class="fields">
+                            <div class="six wide field">
+                                <label>Translate into</label>
+                                <select class="ui dropdown"
+                                        v-model="translationTargetLang"
+                                        @change="onTranslationLanguageChange"
+                                        aria-label="translation target language">
+                                    <option v-for="lang in translationLanguages"
+                                            :key="lang.code"
+                                            :value="lang.code">
+                                        {{ lang.name }} ({{ lang.code }})
+                                    </option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="ui accordion">
                     <div class="title">
                         <i class="dropdown icon"></i>
@@ -539,6 +828,21 @@ export default {
                     <i class="refresh icon"></i>
                     Reset
                 </button>
+                <button class="ui button"
+                        :class="{ 'active': showTranslationPanel }"
+                        :disabled="!isValidForm()"
+                        @click="toggleTranslationPanel">
+                    <i class="globe icon"></i>
+                    Translation settings
+                </button>
+            </div>
+
+            <div v-if="showTranslationPanel" style="margin-top: 0.5em;">
+                <TranslationSettingsPanel
+                    :prefs="chatPrefs"
+                    :loading="chatPrefsLoading"
+                    :saving="chatPrefsSaving"
+                    @update="onPrefsUpdate" />
             </div>
             
             <div v-if="loading" class="ui active centered inline loader"></div>
@@ -585,6 +889,45 @@ export default {
                                 <p>{{ getMessageContent(message) }}</p>
                                 <div v-if="message.media_type && message.url" class="media-container" style="margin-top: 0.5em;">
                                     <div v-if="getMediaDisplay(message)" v-html="getMediaDisplay(message).content"></div>
+                                </div>
+                                <div v-if="autoTranslations[message.id]"
+                                     class="ui blue mini message"
+                                     style="margin-top: 0.5em; padding: 0.5em 0.75em;">
+                                    <div style="display: flex; align-items: center; gap: 0.5em;">
+                                        <i class="globe icon" style="margin: 0;"></i>
+                                        <span class="ui mini horizontal label blue">{{ autoTranslations[message.id].target_lang }}</span>
+                                        <span style="flex: 1;">{{ autoTranslations[message.id].text }}</span>
+                                    </div>
+                                </div>
+                                <div v-if="message.id && getMessageContent(message) && getMessageContent(message) !== '[No content]'" style="margin-top: 0.5em;">
+                                    <button class="ui mini basic button"
+                                            :class="{ 'active': isTranslationOpen(message.id) }"
+                                            @click="toggleTranslation(message)"
+                                            :disabled="isTranslationLoading(message.id)"
+                                            :aria-label="'Translate message ' + message.id">
+                                        <i class="globe icon"></i>
+                                        <span v-if="isTranslationLoading(message.id)">Translating...</span>
+                                        <span v-else-if="isTranslationOpen(message.id)">Hide translations</span>
+                                        <span v-else>Translate</span>
+                                    </button>
+                                    <div v-if="isTranslationOpen(message.id)" style="margin-top: 0.5em;">
+                                        <div v-if="isTranslationLoading(message.id)" class="ui active centered inline tiny loader"></div>
+                                        <div v-else-if="getTranslation(message.id) && getTranslation(message.id).error" class="ui red mini message">
+                                            {{ getTranslation(message.id).error }}
+                                        </div>
+                                        <div v-else-if="getTranslation(message.id) && getTranslation(message.id).suggestions && getTranslation(message.id).suggestions.length > 0">
+                                            <div class="ui small horizontal label">
+                                                {{ getTranslation(message.id).target_lang }}
+                                                <span v-if="getTranslation(message.id).provider"> · {{ getTranslation(message.id).provider }}</span>
+                                                <span v-if="getTranslation(message.id).cached"> · cached</span>
+                                            </div>
+                                            <div class="ui mini stackable cards" style="margin-top: 0.5em;">
+                                                <div v-for="s in getTranslation(message.id).suggestions" :key="s.variant" class="card" style="width: 100%;">
+                                                    <TranslationSuggestionCard :suggestion="s" />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>

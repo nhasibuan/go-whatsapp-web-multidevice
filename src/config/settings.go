@@ -59,4 +59,25 @@ var (
 	// Chatwoot History Sync settings
 	ChatwootImportMessages          = false // Enable message history import to Chatwoot
 	ChatwootDaysLimitImportMessages = 3     // Days of history to import (default: 3)
+
+	// In-chat translation settings.
+	// Defaults are tuned so the feature is OFF unless the operator opts in.
+	// When enabled but no provider/key is configured, the mock provider is
+	// used so the UI keeps working without external calls.
+	TranslationEnabled           = false
+	TranslationProvider          = "openai" // "openai" | "mock"
+	TranslationOpenAIAPIKey      = ""       // Required for the openai provider
+	TranslationOpenAIBaseURL     = ""       // Optional override (e.g. proxy or Azure endpoint)
+	TranslationOpenAIModel       = ""       // e.g. "gpt-4o-mini" (provider default if empty)
+	TranslationDefaultTargetLang = "en"     // BCP-47-ish, e.g. "en", "id", "ja"
+	TranslationContextWindow     = 20       // Recent messages used as context (0 disables)
+	TranslationCacheTTLSeconds   = 86400    // 24h; 0 disables persistence-time TTL
+	TranslationRequestTimeoutSec = 30       // Per-call provider timeout in seconds
+	TranslationRAGEnabled        = false    // Phase 3 — when true, retrieval-augmented context replaces system context.
+
+	// RAG embedding model. Defaults to OpenAI's text-embedding-3-small —
+	// 1536 dimensions, low cost (~$0.000003/call), high enough quality for
+	// in-chat retrieval. The embedding API key falls back to TranslationOpenAIAPIKey.
+	TranslationOpenAIEmbeddingModel  = "text-embedding-3-small"
+	TranslationOpenAIEmbeddingAPIKey = ""
 )

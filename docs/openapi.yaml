@@ -29,6 +29,8 @@ tags:
     description: newsletter setting
   - name: chatwoot
     description: Chatwoot integration for customer support
+  - name: translation
+    description: In-chat translation with three context-aware suggestions per call.
 security:
   - basicAuth: []
 
@@ -3202,6 +3204,209 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorBadRequest'
 
+  /message/{message_id}/translate:
+    post:
+      operationId: translateMessage
+      tags:
+        - translation
+      summary: Translate a stored message into three context-aware suggestions
+      description: |
+        Translates an existing stored message into the requested target language.
+        Returns three suggestions (literal, natural, tone-matched) conditioned
+        on the recent thread context. Requires `TRANSLATION_ENABLED=true`.
+      parameters:
+        - $ref: '#/components/parameters/DeviceIdHeader'
+        - in: path
+          name: message_id
+          schema:
+            type: string
+          required: true
+          description: The WhatsApp message ID to translate.
+          example: '3EB0288F008D32FCD0A424'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                chat_jid:
+                  type: string
+                  example: '6289685028129@s.whatsapp.net'
+                target_lang:
+                  type: string
+                  example: en
+                source_lang:
+                  type: string
+                  example: id
+                force_refresh:
+                  type: boolean
+                  example: false
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranslateMessageResponse'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBadRequest'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInternalServer'
+
+  /translate/draft:
+    post:
+      operationId: translateDraft
+      tags:
+        - translation
+      summary: Translate a draft string into three context-aware suggestions
+      description: |
+        Translates arbitrary draft text into the requested target language.
+        When `chat_jid` is supplied, recent messages from that chat are used
+        as conversational context for tone matching.
+      parameters:
+        - $ref: '#/components/parameters/DeviceIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - text
+                - target_lang
+              properties:
+                text:
+                  type: string
+                  example: 'See you tomorrow at 9'
+                target_lang:
+                  type: string
+                  example: id
+                source_lang:
+                  type: string
+                  example: en
+                chat_jid:
+                  type: string
+                  example: '6289685028129@s.whatsapp.net'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranslateDraftResponse'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBadRequest'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInternalServer'
+
+  /chat/{chat_jid}/translation-prefs:
+    get:
+      operationId: getChatTranslationPrefs
+      tags:
+        - translation
+      summary: Read per-chat translation preferences
+      description: |
+        Returns the persisted preference row for the chat plus
+        `effective_target_lang` (the value actually used after fallback to the
+        global default). Always responds 200 with sensible defaults when no
+        row has been saved yet, so the UI never has to handle a 404.
+      parameters:
+        - $ref: '#/components/parameters/DeviceIdHeader'
+        - in: path
+          name: chat_jid
+          schema:
+            type: string
+          required: true
+          description: Chat JID whose preferences are being read.
+          example: '6289685028129@s.whatsapp.net'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatTranslationPrefsResponse'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInternalServer'
+    put:
+      operationId: setChatTranslationPrefs
+      tags:
+        - translation
+      summary: Update per-chat translation preferences (partial)
+      description: |
+        Partial upsert. Send only the fields you want to change — omitted
+        fields keep their current value. At least one field must be present
+        so empty bodies cannot silently no-op. An empty string for
+        `target_lang` clears the per-chat override and falls back to the
+        global default.
+      parameters:
+        - $ref: '#/components/parameters/DeviceIdHeader'
+        - in: path
+          name: chat_jid
+          schema:
+            type: string
+          required: true
+          description: Chat JID whose preferences are being updated.
+          example: '6289685028129@s.whatsapp.net'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target_lang:
+                  type: string
+                  example: id
+                auto_translate_inbound:
+                  type: boolean
+                  example: true
+                auto_translate_outbound:
+                  type: boolean
+                  example: false
+                translation_opt_in:
+                  type: boolean
+                  example: false
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatTranslationPrefsResponse'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBadRequest'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInternalServer'
+
 components:
   parameters:
     DeviceIdHeader:
@@ -4391,6 +4596,140 @@ components:
             archived:
               type: boolean
               example: true
+    TranslationSuggestion:
+      type: object
+      properties:
+        variant:
+          type: string
+          enum: [literal, natural, tone_matched]
+          example: natural
+        text:
+          type: string
+          example: See you tomorrow at 9.
+        rationale:
+          type: string
+          example: Idiomatic phrasing for English speakers.
+        confidence:
+          type: number
+          format: float
+          example: 0.85
+    TranslateMessageResponse:
+      type: object
+      properties:
+        status:
+          type: integer
+          example: 200
+        code:
+          type: string
+          example: SUCCESS
+        message:
+          type: string
+          example: Translation suggestions generated
+        results:
+          type: object
+          properties:
+            message_id:
+              type: string
+              example: '3EB0288F008D32FCD0A424'
+            chat_jid:
+              type: string
+              example: '6289685028129@s.whatsapp.net'
+            source_text:
+              type: string
+              example: 'Sampai jumpa besok jam 9'
+            source_lang:
+              type: string
+              example: id
+            target_lang:
+              type: string
+              example: en
+            provider:
+              type: string
+              example: openai
+            cached:
+              type: boolean
+              example: false
+            suggestions:
+              type: array
+              items:
+                $ref: '#/components/schemas/TranslationSuggestion'
+    TranslateDraftResponse:
+      type: object
+      properties:
+        status:
+          type: integer
+          example: 200
+        code:
+          type: string
+          example: SUCCESS
+        message:
+          type: string
+          example: Draft translation suggestions generated
+        results:
+          type: object
+          properties:
+            chat_jid:
+              type: string
+              example: '6289685028129@s.whatsapp.net'
+            source_text:
+              type: string
+              example: 'See you tomorrow at 9'
+            source_lang:
+              type: string
+              example: en
+            target_lang:
+              type: string
+              example: id
+            provider:
+              type: string
+              example: openai
+            cached:
+              type: boolean
+              example: false
+            suggestions:
+              type: array
+              items:
+                $ref: '#/components/schemas/TranslationSuggestion'
+    ChatTranslationPrefsResponse:
+      type: object
+      properties:
+        status:
+          type: integer
+          example: 200
+        code:
+          type: string
+          example: SUCCESS
+        message:
+          type: string
+          example: Chat translation preferences
+        results:
+          type: object
+          properties:
+            chat_jid:
+              type: string
+              example: '6289685028129@s.whatsapp.net'
+            target_lang:
+              type: string
+              description: Per-chat override; empty string means "use global default".
+              example: id
+            auto_translate_inbound:
+              type: boolean
+              example: true
+            auto_translate_outbound:
+              type: boolean
+              example: false
+            translation_opt_in:
+              type: boolean
+              example: false
+            effective_target_lang:
+              type: string
+              description: Language actually used (per-chat override → global default).
+              example: id
+            updated_at:
+              type: integer
+              format: int64
+              description: Unix seconds; absent when no row has been saved yet.
+              example: 1716700000
     GroupInfoResponse:
       type: object
       properties:

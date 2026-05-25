@@ -20,8 +20,10 @@ import (
 	domainMessage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/message"
 	domainNewsletter "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/newsletter"
 	domainSend "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/send"
+	domainTranslation "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/translation"
 	domainUser "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/user"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/chatstorage"
+	infraTranslation "github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/translation"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/sqlite"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
@@ -53,6 +55,7 @@ var (
 	groupUsecase      domainGroup.IGroupUsecase
 	newsletterUsecase domainNewsletter.INewsletterUsecase
 	deviceUsecase     domainDevice.IDeviceUsecase
+	translationUsecase domainTranslation.ITranslationUsecase
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -172,6 +175,44 @@ func initEnvConfig() {
 	}
 	if viper.IsSet("chatwoot_days_limit_import_messages") {
 		config.ChatwootDaysLimitImportMessages = viper.GetInt("chatwoot_days_limit_import_messages")
+	}
+
+	// Translation settings
+	if viper.IsSet("translation_enabled") {
+		config.TranslationEnabled = viper.GetBool("translation_enabled")
+	}
+	if v := viper.GetString("translation_provider"); v != "" {
+		config.TranslationProvider = v
+	}
+	if v := viper.GetString("translation_openai_api_key"); v != "" {
+		config.TranslationOpenAIAPIKey = v
+	}
+	if v := viper.GetString("translation_openai_base_url"); v != "" {
+		config.TranslationOpenAIBaseURL = v
+	}
+	if v := viper.GetString("translation_openai_model"); v != "" {
+		config.TranslationOpenAIModel = v
+	}
+	if v := viper.GetString("translation_default_target_lang"); v != "" {
+		config.TranslationDefaultTargetLang = v
+	}
+	if viper.IsSet("translation_context_window") {
+		config.TranslationContextWindow = viper.GetInt("translation_context_window")
+	}
+	if viper.IsSet("translation_cache_ttl") {
+		config.TranslationCacheTTLSeconds = viper.GetInt("translation_cache_ttl")
+	}
+	if viper.IsSet("translation_request_timeout_sec") {
+		config.TranslationRequestTimeoutSec = viper.GetInt("translation_request_timeout_sec")
+	}
+	if viper.IsSet("translation_rag_enabled") {
+		config.TranslationRAGEnabled = viper.GetBool("translation_rag_enabled")
+	}
+	if v := viper.GetString("translation_openai_embedding_model"); v != "" {
+		config.TranslationOpenAIEmbeddingModel = v
+	}
+	if v := viper.GetString("translation_openai_embedding_api_key"); v != "" {
+		config.TranslationOpenAIEmbeddingAPIKey = v
 	}
 }
 
@@ -323,6 +364,80 @@ func initFlags() {
 		config.ChatwootDaysLimitImportMessages,
 		`days of message history to import to Chatwoot --chatwoot-days-limit-import-messages <int> | example: --chatwoot-days-limit-import-messages=7`,
 	)
+
+	// Translation flags
+	rootCmd.PersistentFlags().BoolVarP(
+		&config.TranslationEnabled,
+		"translation-enabled", "",
+		config.TranslationEnabled,
+		`enable in-chat translation feature --translation-enabled <true/false> | example: --translation-enabled=true`,
+	)
+	rootCmd.PersistentFlags().StringVarP(
+		&config.TranslationProvider,
+		"translation-provider", "",
+		config.TranslationProvider,
+		`translation backend: "openai" or "mock" --translation-provider <string> | example: --translation-provider=openai`,
+	)
+	rootCmd.PersistentFlags().StringVarP(
+		&config.TranslationOpenAIAPIKey,
+		"translation-openai-api-key", "",
+		config.TranslationOpenAIAPIKey,
+		`API key for the OpenAI translation provider --translation-openai-api-key <string>`,
+	)
+	rootCmd.PersistentFlags().StringVarP(
+		&config.TranslationOpenAIBaseURL,
+		"translation-openai-base-url", "",
+		config.TranslationOpenAIBaseURL,
+		`override base URL for OpenAI-compatible providers --translation-openai-base-url <string>`,
+	)
+	rootCmd.PersistentFlags().StringVarP(
+		&config.TranslationOpenAIModel,
+		"translation-openai-model", "",
+		config.TranslationOpenAIModel,
+		`model name for the OpenAI translation provider --translation-openai-model <string> | example: --translation-openai-model=gpt-4o-mini`,
+	)
+	rootCmd.PersistentFlags().StringVarP(
+		&config.TranslationDefaultTargetLang,
+		"translation-default-target-lang", "",
+		config.TranslationDefaultTargetLang,
+		`default target language used when none is provided --translation-default-target-lang <string> | example: --translation-default-target-lang=en`,
+	)
+	rootCmd.PersistentFlags().IntVarP(
+		&config.TranslationContextWindow,
+		"translation-context-window", "",
+		config.TranslationContextWindow,
+		`how many recent messages to send as context --translation-context-window <int> | example: --translation-context-window=20`,
+	)
+	rootCmd.PersistentFlags().IntVarP(
+		&config.TranslationCacheTTLSeconds,
+		"translation-cache-ttl", "",
+		config.TranslationCacheTTLSeconds,
+		`cache lifetime for translations in seconds (0 disables) --translation-cache-ttl <int> | example: --translation-cache-ttl=86400`,
+	)
+	rootCmd.PersistentFlags().IntVarP(
+		&config.TranslationRequestTimeoutSec,
+		"translation-request-timeout-sec", "",
+		config.TranslationRequestTimeoutSec,
+		`per-call provider timeout in seconds --translation-request-timeout-sec <int> | example: --translation-request-timeout-sec=30`,
+	)
+	rootCmd.PersistentFlags().BoolVarP(
+		&config.TranslationRAGEnabled,
+		"translation-rag-enabled", "",
+		config.TranslationRAGEnabled,
+		`enable Phase 3 RAG retrieval pipeline (requires an embedding API key) --translation-rag-enabled <true/false>`,
+	)
+	rootCmd.PersistentFlags().StringVarP(
+		&config.TranslationOpenAIEmbeddingModel,
+		"translation-openai-embedding-model", "",
+		config.TranslationOpenAIEmbeddingModel,
+		`embedding model used for RAG retrieval --translation-openai-embedding-model <string> | example: --translation-openai-embedding-model=text-embedding-3-small`,
+	)
+	rootCmd.PersistentFlags().StringVarP(
+		&config.TranslationOpenAIEmbeddingAPIKey,
+		"translation-openai-embedding-api-key", "",
+		config.TranslationOpenAIEmbeddingAPIKey,
+		`API key for the embedding provider; falls back to translation-openai-api-key when empty --translation-openai-embedding-api-key <string>`,
+	)
 }
 
 func initChatStorage() (*sql.DB, error) {
@@ -392,6 +507,13 @@ func initApp() {
 	groupUsecase = usecase.NewGroupService()
 	newsletterUsecase = usecase.NewNewsletterService()
 	deviceUsecase = usecase.NewDeviceService(dm)
+	translationRepo := infraTranslation.NewSQLiteRepository(chatStorageDB)
+	translationUsecase = usecase.NewTranslationService(
+		chatStorageRepo,
+		translationRepo,
+		infraTranslation.BuildProvider(),
+		usecase.WithEmbedder(infraTranslation.BuildEmbedder()),
+	)
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
