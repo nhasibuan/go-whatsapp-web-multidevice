@@ -59,4 +59,18 @@ var (
 	// Chatwoot History Sync settings
 	ChatwootImportMessages          = false // Enable message history import to Chatwoot
 	ChatwootDaysLimitImportMessages = 3     // Days of history to import (default: 3)
+
+	// Translation feature (Phase 1 MVP, OpenAI provider)
+	// Disabled by default — enable with TRANSLATION_ENABLED=true and provide
+	// an API key. When disabled, the /translate/* endpoints return a clear
+	// "feature disabled" error instead of failing at boot.
+	TranslationEnabled           = false
+	TranslationProvider          = "openai"     // currently the only built-in provider
+	TranslationOpenAIAPIKey      = ""           // required when TranslationProvider == "openai"
+	TranslationOpenAIModel       = "gpt-4o-mini"
+	TranslationOpenAIBaseURL     = ""           // optional override for OpenAI-compatible endpoints
+	TranslationDefaultTargetLang = "en"         // BCP-47 language tag
+	TranslationContextWindow     = 20           // recent messages used to condition the translation
+	TranslationCacheEnabled      = true         // dedupe identical requests via the message_translations table
+	TranslationTimeoutSeconds    = 30           // HTTP timeout for the provider call
 )

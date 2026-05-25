@@ -19,6 +19,11 @@ export default {
       mediaDownloadErrors: {}, // messageId -> error message
       maxConcurrentDownloads: 3,
       currentDownloads: 0,
+      // Translation state: messageId -> { expanded, loading, error, suggestions, targetLang, sourceLang, provider, cacheHit }
+      translations: {},
+      // Default target language for newly opened translations. Persisted in
+      // localStorage so the user's pick sticks across reloads.
+      defaultTargetLang: localStorage.getItem('translationTargetLang') || 'en',
     };
   },
   computed: {
@@ -430,6 +435,113 @@ export default {
         }
       }, 200);
     },
+    // ----- Translation -----
+    isTranslatable(message) {
+      // Only text-bearing messages are worth translating. Skip pure-media
+      // messages and empty content.
+      if (!message || !message.id) return false;
+      const text = (message.content || message.text || message.caption || '').trim();
+      return text.length > 0;
+    },
+    getTranslationState(messageId) {
+      return this.translations[messageId] || null;
+    },
+    async toggleTranslate(message) {
+      const id = message.id;
+      const existing = this.translations[id];
+      if (existing && existing.expanded) {
+        // Collapse the panel without discarding the result so re-opening is instant.
+        this.translations[id] = { ...existing, expanded: false };
+        return;
+      }
+      if (existing && existing.suggestions && existing.suggestions.length > 0) {
+        this.translations[id] = { ...existing, expanded: true };
+        return;
+      }
+      await this.fetchTranslation(message, this.defaultTargetLang);
+    },
+    async fetchTranslation(message, targetLang) {
+      const id = message.id;
+      const lang = (targetLang || this.defaultTargetLang || 'en').trim();
+      this.translations[id] = {
+        ...(this.translations[id] || {}),
+        expanded: true,
+        loading: true,
+        error: '',
+        targetLang: lang,
+        suggestions: [],
+      };
+      try {
+        const payload = {
+          chat_jid: this.formattedJid,
+          target_lang: lang,
+        };
+        const response = await window.http.post(
+          `/message/${encodeURIComponent(id)}/translate`,
+          payload
+        );
+        const r = response.data?.results || {};
+        this.translations[id] = {
+          expanded: true,
+          loading: false,
+          error: '',
+          suggestions: Array.isArray(r.suggestions) ? r.suggestions : [],
+          targetLang: r.target_lang || lang,
+          sourceLang: r.source_lang || '',
+          provider: r.provider || '',
+          cacheHit: !!r.cache_hit,
+        };
+      } catch (err) {
+        const msg = err.response?.data?.message || err.message || 'Translation failed';
+        this.translations[id] = {
+          ...(this.translations[id] || {}),
+          expanded: true,
+          loading: false,
+          error: msg,
+          suggestions: [],
+        };
+      }
+    },
+    async retranslate(message, targetLang) {
+      // Force a refresh in a different language; clears any cached UI state for this message.
+      this.translations[message.id] = { expanded: true, loading: true, error: '', suggestions: [] };
+      this.defaultTargetLang = targetLang;
+      try { localStorage.setItem('translationTargetLang', targetLang); } catch (e) { /* ignore */ }
+      await this.fetchTranslation(message, targetLang);
+    },
+    variantLabel(variant) {
+      switch ((variant || '').toLowerCase()) {
+        case 'literal': return 'Literal';
+        case 'natural': return 'Natural';
+        case 'tone_matched': return 'Tone-matched';
+        default: return variant || 'Suggestion';
+      }
+    },
+    variantColor(variant) {
+      switch ((variant || '').toLowerCase()) {
+        case 'literal': return 'grey';
+        case 'natural': return 'blue';
+        case 'tone_matched': return 'teal';
+        default: return 'grey';
+      }
+    },
+    copySuggestion(text) {
+      if (!text) return;
+      const fallback = () => {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); } catch (e) { /* ignore */ }
+        document.body.removeChild(ta);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).catch(fallback);
+      } else {
+        fallback();
+      }
+      showSuccessInfo('Translation copied to clipboard');
+    },
   },
   mounted() {
     // Expose the openModal method globally for ChatList component to call
@@ -574,6 +686,14 @@ export default {
                                 <div class="ui right floated horizontal label">
                                     {{ formatMessageType(message) }}
                                 </div>
+                                <a v-if="isTranslatable(message)"
+                                   class="ui right floated mini icon link"
+                                   :class="getTranslationState(message.id) && getTranslationState(message.id).expanded ? 'teal' : 'grey'"
+                                   :title="'Translate to ' + (getTranslationState(message.id)?.targetLang || defaultTargetLang)"
+                                   style="margin-right: 0.5em; cursor: pointer;"
+                                   @click.stop="toggleTranslate(message)">
+                                    <i class="globe icon"></i>
+                                </a>
                             </div>
                             <div class="meta">
                                 <span>{{ formatTimestamp(message.timestamp) }}</span>
@@ -585,6 +705,69 @@ export default {
                                 <p>{{ getMessageContent(message) }}</p>
                                 <div v-if="message.media_type && message.url" class="media-container" style="margin-top: 0.5em;">
                                     <div v-if="getMediaDisplay(message)" v-html="getMediaDisplay(message).content"></div>
+                                </div>
+
+                                <!-- Translation panel: 3 context-aware suggestions -->
+                                <div v-if="getTranslationState(message.id) && getTranslationState(message.id).expanded"
+                                     class="ui segment" style="margin-top: 0.75em; background: #fafafa;">
+                                    <div class="ui tiny form" style="margin-bottom: 0.5em;">
+                                        <div class="inline fields" style="margin: 0;">
+                                            <div class="field">
+                                                <label style="font-weight: 600; font-size: 0.85em;">Translate to</label>
+                                            </div>
+                                            <div class="field">
+                                                <select :value="getTranslationState(message.id).targetLang || defaultTargetLang"
+                                                        @change="retranslate(message, $event.target.value)"
+                                                        class="ui mini dropdown">
+                                                    <option value="en">English</option>
+                                                    <option value="id">Indonesian</option>
+                                                    <option value="ja">Japanese</option>
+                                                    <option value="zh">Chinese</option>
+                                                    <option value="es">Spanish</option>
+                                                    <option value="fr">French</option>
+                                                    <option value="de">German</option>
+                                                    <option value="pt">Portuguese</option>
+                                                    <option value="ar">Arabic</option>
+                                                    <option value="ko">Korean</option>
+                                                    <option value="ru">Russian</option>
+                                                    <option value="vi">Vietnamese</option>
+                                                </select>
+                                            </div>
+                                            <div class="field" v-if="getTranslationState(message.id).cacheHit">
+                                                <span class="ui tiny grey label" title="Served from local cache">cached</span>
+                                            </div>
+                                            <div class="field" v-if="getTranslationState(message.id).provider">
+                                                <span class="ui tiny basic label">{{ getTranslationState(message.id).provider }}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div v-if="getTranslationState(message.id).loading" class="ui active centered inline tiny loader"
+                                         style="margin: 1em auto;"></div>
+
+                                    <div v-else-if="getTranslationState(message.id).error" class="ui tiny red message">
+                                        <i class="exclamation triangle icon"></i>
+                                        {{ getTranslationState(message.id).error }}
+                                    </div>
+
+                                    <div v-else-if="getTranslationState(message.id).suggestions && getTranslationState(message.id).suggestions.length > 0">
+                                        <div v-for="(s, idx) in getTranslationState(message.id).suggestions"
+                                             :key="message.id + '-' + idx"
+                                             class="ui segment" style="padding: 0.6em 0.8em; margin: 0.3em 0;">
+                                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25em;">
+                                                <span class="ui tiny horizontal label"
+                                                      :class="variantColor(s.variant)">{{ variantLabel(s.variant) }}</span>
+                                                <a class="ui mini button" style="cursor: pointer;"
+                                                   @click.stop="copySuggestion(s.text)">
+                                                    <i class="copy icon"></i> Copy
+                                                </a>
+                                            </div>
+                                            <div style="font-size: 1em; line-height: 1.35;">{{ s.text }}</div>
+                                            <div v-if="s.rationale" style="color: #888; font-size: 0.8em; margin-top: 0.2em;">
+                                                {{ s.rationale }}
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>

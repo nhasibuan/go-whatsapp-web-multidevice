@@ -1144,5 +1144,57 @@ func (r *SQLiteRepository) getMigrations() []string {
 
 		// Migration 14: Add index for archived column
 		`CREATE INDEX IF NOT EXISTS idx_chats_archived ON chats(archived)`,
+
+		// Migration 15: Translation cache (Phase 1)
+		// Stores the JSON-serialized 3 suggestions returned by the provider, keyed by
+		// message + chat + device + target language + prompt version. Re-translating
+		// the same message with the same params is a free cache hit.
+		`CREATE TABLE IF NOT EXISTS message_translations (
+			message_id VARCHAR(255) NOT NULL,
+			chat_jid VARCHAR(255) NOT NULL,
+			device_id VARCHAR(255) NOT NULL DEFAULT '',
+			target_lang VARCHAR(16) NOT NULL,
+			source_lang VARCHAR(16) DEFAULT '',
+			provider VARCHAR(64) NOT NULL DEFAULT '',
+			prompt_version VARCHAR(32) NOT NULL DEFAULT 'v1',
+			suggestions_json TEXT NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (message_id, chat_jid, device_id, target_lang, prompt_version)
+		)`,
+
+		// Migration 16: index for translation cache lookups by message + lang
+		`CREATE INDEX IF NOT EXISTS idx_translations_message ON message_translations(message_id, target_lang)`,
+
+		// Migration 17: per-chat translation preferences. Empty target_lang means
+		// fall back to TRANSLATION_DEFAULT_TARGET_LANG. Auto-translate flags are
+		// reserved for Phase 4 but the schema is in place now to avoid a second
+		// migration round.
+		`CREATE TABLE IF NOT EXISTS chat_translation_prefs (
+			device_id VARCHAR(255) NOT NULL DEFAULT '',
+			chat_jid VARCHAR(255) NOT NULL,
+			target_lang VARCHAR(16) NOT NULL DEFAULT '',
+			auto_translate_inbound BOOLEAN DEFAULT FALSE,
+			auto_translate_outbound BOOLEAN DEFAULT FALSE,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (device_id, chat_jid)
+		)`,
+
+		// Migration 18: message embeddings for RAG (Phase 3, schema ready now).
+		// Vector stored as JSON-encoded float array (cross-DB safe). For larger
+		// corpora, swap to BLOB or sqlite-vec without changing this row layout.
+		`CREATE TABLE IF NOT EXISTS message_embeddings (
+			message_id VARCHAR(255) NOT NULL,
+			chat_jid VARCHAR(255) NOT NULL,
+			device_id VARCHAR(255) NOT NULL DEFAULT '',
+			model VARCHAR(64) NOT NULL,
+			dim INTEGER NOT NULL DEFAULT 0,
+			vector_json TEXT NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (message_id, chat_jid, device_id, model)
+		)`,
+
+		// Migration 19: index for embedding retrieval scoped by chat
+		`CREATE INDEX IF NOT EXISTS idx_embeddings_chat ON message_embeddings(device_id, chat_jid)`,
 	}
 }

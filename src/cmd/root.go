@@ -20,8 +20,10 @@ import (
 	domainMessage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/message"
 	domainNewsletter "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/newsletter"
 	domainSend "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/send"
+	domainTranslation "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/translation"
 	domainUser "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/user"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/chatstorage"
+	infraTranslation "github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/translation"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/usecase"
@@ -53,6 +55,7 @@ var (
 	groupUsecase      domainGroup.IGroupUsecase
 	newsletterUsecase domainNewsletter.INewsletterUsecase
 	deviceUsecase     domainDevice.IDeviceUsecase
+	translationUsecase domainTranslation.ITranslationUsecase
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -172,6 +175,35 @@ func initEnvConfig() {
 	}
 	if viper.IsSet("chatwoot_days_limit_import_messages") {
 		config.ChatwootDaysLimitImportMessages = viper.GetInt("chatwoot_days_limit_import_messages")
+	}
+
+	// Translation feature settings
+	if viper.IsSet("translation_enabled") {
+		config.TranslationEnabled = viper.GetBool("translation_enabled")
+	}
+	if v := viper.GetString("translation_provider"); v != "" {
+		config.TranslationProvider = v
+	}
+	if v := viper.GetString("translation_openai_api_key"); v != "" {
+		config.TranslationOpenAIAPIKey = v
+	}
+	if v := viper.GetString("translation_openai_model"); v != "" {
+		config.TranslationOpenAIModel = v
+	}
+	if v := viper.GetString("translation_openai_base_url"); v != "" {
+		config.TranslationOpenAIBaseURL = v
+	}
+	if v := viper.GetString("translation_default_target_lang"); v != "" {
+		config.TranslationDefaultTargetLang = v
+	}
+	if viper.IsSet("translation_context_window") {
+		config.TranslationContextWindow = viper.GetInt("translation_context_window")
+	}
+	if viper.IsSet("translation_cache_enabled") {
+		config.TranslationCacheEnabled = viper.GetBool("translation_cache_enabled")
+	}
+	if viper.IsSet("translation_timeout_seconds") {
+		config.TranslationTimeoutSeconds = viper.GetInt("translation_timeout_seconds")
 	}
 }
 
@@ -395,6 +427,22 @@ func initApp() {
 	groupUsecase = usecase.NewGroupService()
 	newsletterUsecase = usecase.NewNewsletterService()
 	deviceUsecase = usecase.NewDeviceService(dm)
+
+	// Translation feature: build provider from config (only OpenAI is wired
+	// today). The provider is nil when the feature is disabled or no key is
+	// configured — the usecase reports a clear error in that case rather than
+	// blocking app boot.
+	var translationProvider domainTranslation.Provider
+	if config.TranslationEnabled && strings.EqualFold(config.TranslationProvider, "openai") && config.TranslationOpenAIAPIKey != "" {
+		translationProvider = infraTranslation.NewOpenAIProvider(infraTranslation.OpenAIConfig{
+			APIKey:  config.TranslationOpenAIAPIKey,
+			Model:   config.TranslationOpenAIModel,
+			BaseURL: config.TranslationOpenAIBaseURL,
+			Timeout: time.Duration(config.TranslationTimeoutSeconds) * time.Second,
+		})
+	}
+	translationRepo := infraTranslation.NewSQLiteRepository(chatStorageDB)
+	translationUsecase = usecase.NewTranslationService(chatStorageRepo, translationRepo, translationProvider)
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.

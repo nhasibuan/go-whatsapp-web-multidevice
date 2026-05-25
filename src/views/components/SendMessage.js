@@ -15,6 +15,12 @@ export default {
             mention_everyone: false,
             duration: 0,
             loading: false,
+            // Translation (compose-assist) — replaces this.text with a chosen
+            // suggestion before send.
+            translateTargetLang: localStorage.getItem('translationTargetLang') || 'en',
+            translateLoading: false,
+            translateSuggestions: [],
+            translateError: '',
         }
     },
     computed: {
@@ -98,6 +104,66 @@ export default {
             this.is_forwarded = false;
             this.mention_everyone = false;
             this.duration = 0;
+            this.translateLoading = false;
+            this.translateSuggestions = [];
+            this.translateError = '';
+        },
+        // ----- Translation (compose-assist) -----
+        async fetchTranslateSuggestions() {
+            if (!this.text.trim() || this.translateLoading) return;
+            this.translateLoading = true;
+            this.translateError = '';
+            this.translateSuggestions = [];
+            try {
+                const payload = {
+                    text: this.text.trim(),
+                    target_lang: this.translateTargetLang,
+                };
+                // Pass chat_jid when we have a recipient — gives the model
+                // conversation context so the tone-matched variant is useful.
+                if (this.type !== window.TYPESTATUS && this.phone.trim()) {
+                    payload.chat_jid = this.phone_id;
+                }
+                const response = await window.http.post('/translate/draft', payload);
+                const r = response.data?.results || {};
+                this.translateSuggestions = Array.isArray(r.suggestions) ? r.suggestions : [];
+                if (this.translateSuggestions.length === 0) {
+                    this.translateError = 'No suggestions returned';
+                }
+            } catch (err) {
+                this.translateError = err.response?.data?.message || err.message || 'Translation failed';
+            } finally {
+                this.translateLoading = false;
+            }
+        },
+        useTranslation(suggestion) {
+            // Replace mode: the chosen translation overwrites the typed text.
+            // The user can still edit before pressing Send.
+            this.text = suggestion.text || '';
+            this.translateSuggestions = [];
+            this.translateError = '';
+            try { localStorage.setItem('translationTargetLang', this.translateTargetLang); } catch (e) { /* ignore */ }
+            showSuccessInfo('Message replaced with translation. Review then press Send.');
+        },
+        clearTranslateSuggestions() {
+            this.translateSuggestions = [];
+            this.translateError = '';
+        },
+        translateVariantLabel(variant) {
+            switch ((variant || '').toLowerCase()) {
+                case 'literal': return 'Literal';
+                case 'natural': return 'Natural';
+                case 'tone_matched': return 'Tone-matched';
+                default: return variant || 'Suggestion';
+            }
+        },
+        translateVariantColor(variant) {
+            switch ((variant || '').toLowerCase()) {
+                case 'literal': return 'grey';
+                case 'natural': return 'blue';
+                case 'tone_matched': return 'teal';
+                default: return 'grey';
+            }
         },
     },
     template: `
@@ -131,6 +197,58 @@ export default {
                     <textarea v-model="text" placeholder="Hello this is message text"
                               aria-label="message"></textarea>
                 </div>
+
+                <!-- Translate before send: replaces the message above with a chosen suggestion -->
+                <div class="field">
+                    <label>Translate before send (optional)</label>
+                    <div class="ui action input" style="max-width: 100%;">
+                        <select v-model="translateTargetLang" class="ui compact selection dropdown" style="border-radius: 4px 0 0 4px;">
+                            <option value="en">English</option>
+                            <option value="id">Indonesian</option>
+                            <option value="ja">Japanese</option>
+                            <option value="zh">Chinese</option>
+                            <option value="es">Spanish</option>
+                            <option value="fr">French</option>
+                            <option value="de">German</option>
+                            <option value="pt">Portuguese</option>
+                            <option value="ar">Arabic</option>
+                            <option value="ko">Korean</option>
+                            <option value="ru">Russian</option>
+                            <option value="vi">Vietnamese</option>
+                        </select>
+                        <button class="ui teal button"
+                                :class="{'disabled': translateLoading || !text.trim()}"
+                                @click.prevent="fetchTranslateSuggestions">
+                            <i class="globe icon"></i>
+                            {{ translateLoading ? 'Translating…' : 'Translate' }}
+                        </button>
+                    </div>
+                    <div v-if="translateError" class="ui tiny red message" style="margin-top: 0.5em;">
+                        <i class="exclamation triangle icon"></i> {{ translateError }}
+                    </div>
+                    <div v-if="translateSuggestions.length > 0" class="ui segments" style="margin-top: 0.5em;">
+                        <div v-for="(s, idx) in translateSuggestions" :key="'tr-' + idx"
+                             class="ui segment" style="padding: 0.6em 0.8em;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25em;">
+                                <span class="ui tiny horizontal label"
+                                      :class="translateVariantColor(s.variant)">{{ translateVariantLabel(s.variant) }}</span>
+                                <button class="ui mini teal button" @click.prevent="useTranslation(s)">
+                                    <i class="check icon"></i> Use this
+                                </button>
+                            </div>
+                            <div style="font-size: 0.95em; line-height: 1.35;">{{ s.text }}</div>
+                            <div v-if="s.rationale" style="color: #888; font-size: 0.78em; margin-top: 0.2em;">
+                                {{ s.rationale }}
+                            </div>
+                        </div>
+                        <div class="ui secondary segment" style="text-align: right; padding: 0.4em 0.8em;">
+                            <a style="cursor: pointer; color: #888;" @click.prevent="clearTranslateSuggestions">
+                                <i class="close icon"></i> Dismiss suggestions
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="field" v-if="isShowReplyId()">
                     <label>Is Forwarded</label>
                     <div class="ui toggle checkbox">

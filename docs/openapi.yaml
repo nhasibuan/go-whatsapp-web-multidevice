@@ -29,6 +29,8 @@ tags:
     description: newsletter setting
   - name: chatwoot
     description: Chatwoot integration for customer support
+  - name: translation
+    description: Context-aware in-chat translation (3 suggestions per request)
 security:
   - basicAuth: []
 
@@ -1870,6 +1872,146 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorNotFound'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInternalServer'
+
+  /message/{message_id}/translate:
+    post:
+      operationId: translateMessage
+      tags:
+        - translation
+      summary: Translate a stored message
+      description: |
+        Translate an existing stored message into the target language. Returns
+        three context-aware suggestions: a literal translation, an idiomatic
+        natural translation, and one that matches the tone of the recent thread.
+        Results are cached per (message_id, target_lang).
+      parameters:
+        - $ref: '#/components/parameters/DeviceIdHeader'
+        - in: path
+          name: message_id
+          schema:
+            type: string
+          required: true
+          description: Message ID
+          example: '3EB0123456789ABCDEF'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                chat_jid:
+                  type: string
+                  description: Optional. When provided, the message must belong to this chat.
+                  example: '6289685028129@s.whatsapp.net'
+                target_lang:
+                  type: string
+                  description: BCP-47 target language. Falls back to per-chat preference, then TRANSLATION_DEFAULT_TARGET_LANG.
+                  example: en
+                source_lang:
+                  type: string
+                  description: Optional source language hint. Provider auto-detects when empty.
+                  example: id
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: integer
+                    example: 200
+                  code:
+                    type: string
+                    example: SUCCESS
+                  message:
+                    type: string
+                    example: Translation generated successfully
+                  results:
+                    $ref: '#/components/schemas/TranslationResult'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBadRequest'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInternalServer'
+
+  /translate/draft:
+    post:
+      operationId: translateDraft
+      tags:
+        - translation
+      summary: Translate arbitrary draft text (compose-assist)
+      description: |
+        Translate user-supplied text before sending. When chat_jid is provided
+        the recent messages of that chat are used as context so the
+        tone-matched suggestion fits the conversation. Drafts are not cached.
+      parameters:
+        - $ref: '#/components/parameters/DeviceIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - text
+              properties:
+                text:
+                  type: string
+                  description: Source text to translate (1–4096 chars).
+                  example: 'Halo apa kabar?'
+                chat_jid:
+                  type: string
+                  description: Optional. Provides conversation context for tone-matched suggestion.
+                  example: '6289685028129@s.whatsapp.net'
+                target_lang:
+                  type: string
+                  description: BCP-47 target language.
+                  example: en
+                source_lang:
+                  type: string
+                  description: Optional source language hint.
+                  example: id
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: integer
+                    example: 200
+                  code:
+                    type: string
+                    example: SUCCESS
+                  message:
+                    type: string
+                    example: Translation generated successfully
+                  results:
+                    $ref: '#/components/schemas/TranslationResult'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBadRequest'
         '500':
           description: Internal Server Error
           content:
@@ -4384,3 +4526,52 @@ components:
               format: date-time
             error:
               type: string
+
+    TranslationSuggestion:
+      type: object
+      description: One of three translation candidates returned by the provider.
+      properties:
+        variant:
+          type: string
+          enum: [literal, natural, tone_matched]
+          example: tone_matched
+        text:
+          type: string
+          example: "Hey, how's it going?"
+        rationale:
+          type: string
+          description: Short explanation of why this suggestion fits.
+          example: matches the casual tone of recent replies
+        confidence:
+          type: number
+          format: float
+          example: 0.82
+    TranslationResult:
+      type: object
+      description: Result payload for both /message/{message_id}/translate and /translate/draft.
+      properties:
+        message_id:
+          type: string
+          description: Present only when translating a stored message.
+          example: '3EB0123456789ABCDEF'
+        source_text:
+          type: string
+          example: 'Halo apa kabar?'
+        source_lang:
+          type: string
+          example: id
+        target_lang:
+          type: string
+          example: en
+        provider:
+          type: string
+          example: 'openai:gpt-4o-mini'
+        cache_hit:
+          type: boolean
+          example: false
+        suggestions:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items:
+            $ref: '#/components/schemas/TranslationSuggestion'
