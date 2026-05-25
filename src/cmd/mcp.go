@@ -54,6 +54,11 @@ func mcpServer(_ *cobra.Command, _ []string) {
 	groupHandler := mcp.InitMcpGroup(groupUsecase)
 	groupHandler.AddGroupTools(mcpServer)
 
+	// Translation tools mirror the REST endpoints. The handler tolerates a
+	// nil usecase (feature disabled) and surfaces a clear error per call.
+	translationHandler := mcp.InitMcpTranslation(translationUsecase)
+	translationHandler.AddTranslationTools(mcpServer)
+
 	// Create SSE server
 	sseServer := server.NewSSEServer(
 		mcpServer,
