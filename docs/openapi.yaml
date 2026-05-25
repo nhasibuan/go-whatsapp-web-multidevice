@@ -2019,6 +2019,118 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorInternalServer'
 
+  /chat/{chat_jid}/translation-prefs:
+    get:
+      operationId: getChatTranslationPrefs
+      tags:
+        - translation
+      summary: Get per-chat translation preferences
+      description: |
+        Returns the per-chat preference row plus the effective target language
+        (request → per-chat → global default). Always 200; rows that do not
+        exist yet come back with empty target_lang and the global default in
+        effective_target_lang.
+      parameters:
+        - $ref: '#/components/parameters/DeviceIdHeader'
+        - in: path
+          name: chat_jid
+          required: true
+          schema:
+            type: string
+          example: '6289685028129@s.whatsapp.net'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: integer
+                    example: 200
+                  code:
+                    type: string
+                    example: SUCCESS
+                  message:
+                    type: string
+                    example: Chat translation preferences
+                  results:
+                    $ref: '#/components/schemas/ChatTranslationPrefs'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInternalServer'
+    put:
+      operationId: setChatTranslationPrefs
+      tags:
+        - translation
+      summary: Update per-chat translation preferences
+      description: |
+        Upserts the per-chat preference row. At least one of target_lang,
+        auto_translate_inbound, auto_translate_outbound must be provided.
+        Omitted fields are left unchanged on existing rows.
+      parameters:
+        - $ref: '#/components/parameters/DeviceIdHeader'
+        - in: path
+          name: chat_jid
+          required: true
+          schema:
+            type: string
+          example: '6289685028129@s.whatsapp.net'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target_lang:
+                  type: string
+                  description: BCP-47 target language; empty string clears the per-chat override.
+                  example: id
+                auto_translate_inbound:
+                  type: boolean
+                  description: Show inline translations beneath every received message in this chat.
+                  example: true
+                auto_translate_outbound:
+                  type: boolean
+                  description: Reserved for future compose-assist auto-translate. Persisted now.
+                  example: false
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: integer
+                    example: 200
+                  code:
+                    type: string
+                    example: SUCCESS
+                  message:
+                    type: string
+                    example: Chat translation preferences updated
+                  results:
+                    $ref: '#/components/schemas/ChatTranslationPrefs'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBadRequest'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInternalServer'
+
   /chats:
     get:
       operationId: listChats
@@ -4575,3 +4687,29 @@ components:
           maxItems: 3
           items:
             $ref: '#/components/schemas/TranslationSuggestion'
+
+    ChatTranslationPrefs:
+      type: object
+      description: Per-chat translation preferences row plus the effective target language.
+      properties:
+        chat_jid:
+          type: string
+          example: '6289685028129@s.whatsapp.net'
+        target_lang:
+          type: string
+          description: Per-chat target language. Empty string means "no override; use global default".
+          example: id
+        effective_target_lang:
+          type: string
+          description: |
+            What the system would actually use right now. Applies the
+            request → per-chat → global-default precedence.
+          example: id
+        auto_translate_inbound:
+          type: boolean
+          description: Show inline translations under every received message.
+          example: true
+        auto_translate_outbound:
+          type: boolean
+          description: Reserved for future compose-assist auto-translate.
+          example: false

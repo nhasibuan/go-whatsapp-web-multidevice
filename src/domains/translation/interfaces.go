@@ -9,6 +9,15 @@ type ITranslationUsecase interface {
 
 	// TranslateDraft translates arbitrary text (used by compose-assist).
 	TranslateDraft(ctx context.Context, request TranslateDraftRequest) (TranslateResponse, error)
+
+	// GetChatPref returns the per-chat preference, with the effective target
+	// language applied. Missing rows return device-level defaults rather
+	// than an error so the UI can render a "not yet configured" panel.
+	GetChatPref(ctx context.Context, request GetChatPrefRequest) (ChatPrefResponse, error)
+
+	// SetChatPref upserts the per-chat preference. Nil pointer fields in the
+	// request are left unchanged.
+	SetChatPref(ctx context.Context, request SetChatPrefRequest) (ChatPrefResponse, error)
 }
 
 // ITranslationRepository handles persistence of translation cache, per-chat

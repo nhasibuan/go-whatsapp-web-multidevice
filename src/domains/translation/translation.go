@@ -61,14 +61,39 @@ type CachedTranslation struct {
 	CreatedAt     time.Time
 }
 
-// ChatPref is the per-chat translation preference (Phase 4 wiring; schema is
-// in place now so the migration is once-and-done).
+// ChatPref is the per-chat translation preference.
 type ChatPref struct {
 	DeviceID              string
 	ChatJID               string
 	TargetLang            string
 	AutoTranslateInbound  bool
 	AutoTranslateOutbound bool
+}
+
+// GetChatPrefRequest fetches the current per-chat preference. Returns
+// effective values (zero values when no row exists yet).
+type GetChatPrefRequest struct {
+	ChatJID string `json:"chat_jid" uri:"chat_jid"`
+}
+
+// SetChatPrefRequest upserts the per-chat preference. Pointer fields let
+// callers send only the values they care about; nil means "leave unchanged".
+type SetChatPrefRequest struct {
+	ChatJID               string  `json:"chat_jid" uri:"chat_jid"`
+	TargetLang            *string `json:"target_lang,omitempty"`
+	AutoTranslateInbound  *bool   `json:"auto_translate_inbound,omitempty"`
+	AutoTranslateOutbound *bool   `json:"auto_translate_outbound,omitempty"`
+}
+
+// ChatPrefResponse is the wire shape returned by GET/PUT prefs endpoints.
+// EffectiveTargetLang reflects what would actually be used right now,
+// applying the request → per-chat → global default precedence.
+type ChatPrefResponse struct {
+	ChatJID               string `json:"chat_jid"`
+	TargetLang            string `json:"target_lang"`
+	EffectiveTargetLang   string `json:"effective_target_lang"`
+	AutoTranslateInbound  bool   `json:"auto_translate_inbound"`
+	AutoTranslateOutbound bool   `json:"auto_translate_outbound"`
 }
 
 // MessageEmbedding is reserved for Phase 3 (RAG). The vector is stored as a

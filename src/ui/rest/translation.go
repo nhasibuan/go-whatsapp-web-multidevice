@@ -23,6 +23,11 @@ func InitRestTranslation(app fiber.Router, service domainTranslation.ITranslatio
 	// Translate arbitrary draft text (used by compose-assist before send).
 	app.Post("/translate/draft", rest.TranslateDraft)
 
+	// Per-chat translation preferences. The chat JID lives in the path so it
+	// composes naturally with the existing /chat/:chat_jid/* family.
+	app.Get("/chat/:chat_jid/translation-prefs", rest.GetChatTranslationPrefs)
+	app.Put("/chat/:chat_jid/translation-prefs", rest.SetChatTranslationPrefs)
+
 	return rest
 }
 
@@ -81,6 +86,62 @@ func (controller *Translation) TranslateDraft(c *fiber.Ctx) error {
 		Status:  200,
 		Code:    "SUCCESS",
 		Message: "Translation generated successfully",
+		Results: response,
+	})
+}
+
+
+// GetChatTranslationPrefs handles GET /chat/:chat_jid/translation-prefs.
+//
+// Always returns 200 with the effective target language. When no per-chat row
+// exists yet, target_lang is empty and effective_target_lang reflects the
+// global default — the UI uses this to render placeholder values.
+func (controller *Translation) GetChatTranslationPrefs(c *fiber.Ctx) error {
+	request := domainTranslation.GetChatPrefRequest{
+		ChatJID: c.Params("chat_jid"),
+	}
+
+	response, err := controller.Service.GetChatPref(
+		whatsapp.ContextWithDevice(c.UserContext(), getDeviceFromCtx(c)),
+		request,
+	)
+	utils.PanicIfNeeded(err)
+
+	return c.JSON(utils.ResponseData{
+		Status:  200,
+		Code:    "SUCCESS",
+		Message: "Chat translation preferences",
+		Results: response,
+	})
+}
+
+// SetChatTranslationPrefs handles PUT /chat/:chat_jid/translation-prefs.
+//
+// Body (JSON, all fields optional but at least one must be present):
+//
+//	{
+//	  "target_lang": "id",
+//	  "auto_translate_inbound": true,
+//	  "auto_translate_outbound": false
+//	}
+//
+// Nil/missing fields are left unchanged so a client can flip a single flag
+// without re-sending the whole record.
+func (controller *Translation) SetChatTranslationPrefs(c *fiber.Ctx) error {
+	var request domainTranslation.SetChatPrefRequest
+	utils.PanicIfNeeded(c.BodyParser(&request))
+	request.ChatJID = c.Params("chat_jid")
+
+	response, err := controller.Service.SetChatPref(
+		whatsapp.ContextWithDevice(c.UserContext(), getDeviceFromCtx(c)),
+		request,
+	)
+	utils.PanicIfNeeded(err)
+
+	return c.JSON(utils.ResponseData{
+		Status:  200,
+		Code:    "SUCCESS",
+		Message: "Chat translation preferences updated",
 		Results: response,
 	})
 }

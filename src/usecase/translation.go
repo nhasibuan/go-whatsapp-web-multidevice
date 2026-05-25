@@ -469,6 +469,89 @@ func (s *serviceTranslation) resolveTargetLang(deviceID, chatJID, requested stri
 	return "en"
 }
 
+// GetChatPref returns the current per-chat preference plus the effective
+// target language. Missing rows resolve to zero-valued prefs (which means
+// "use device defaults") rather than an error, so the UI can render a clean
+// "not yet configured" panel without special-casing 404s.
+func (s *serviceTranslation) GetChatPref(ctx context.Context, request domainTranslation.GetChatPrefRequest) (domainTranslation.ChatPrefResponse, error) {
+	if err := validations.ValidateGetChatPref(ctx, &request); err != nil {
+		return domainTranslation.ChatPrefResponse{}, err
+	}
+	deviceID := deviceIDFromContext(ctx)
+	if deviceID == "" {
+		return domainTranslation.ChatPrefResponse{}, fmt.Errorf("device identification required")
+	}
+
+	resp := domainTranslation.ChatPrefResponse{
+		ChatJID:             request.ChatJID,
+		EffectiveTargetLang: s.resolveTargetLang(deviceID, request.ChatJID, ""),
+	}
+	if s.translationRepo == nil {
+		return resp, nil
+	}
+	pref, err := s.translationRepo.GetChatPref(deviceID, request.ChatJID)
+	if err != nil {
+		return resp, fmt.Errorf("get chat pref: %w", err)
+	}
+	if pref != nil {
+		resp.TargetLang = pref.TargetLang
+		resp.AutoTranslateInbound = pref.AutoTranslateInbound
+		resp.AutoTranslateOutbound = pref.AutoTranslateOutbound
+	}
+	return resp, nil
+}
+
+// SetChatPref upserts a per-chat preference. Nil pointer fields are left
+// unchanged so a client can flip a single flag without re-sending the
+// whole record.
+func (s *serviceTranslation) SetChatPref(ctx context.Context, request domainTranslation.SetChatPrefRequest) (domainTranslation.ChatPrefResponse, error) {
+	if err := validations.ValidateSetChatPref(ctx, &request); err != nil {
+		return domainTranslation.ChatPrefResponse{}, err
+	}
+	deviceID := deviceIDFromContext(ctx)
+	if deviceID == "" {
+		return domainTranslation.ChatPrefResponse{}, fmt.Errorf("device identification required")
+	}
+	if s.translationRepo == nil {
+		return domainTranslation.ChatPrefResponse{}, fmt.Errorf("translation repository not configured")
+	}
+
+	// Read-modify-write so partial updates work without races (single-writer
+	// per chat in practice; the underlying upsert is atomic enough for our
+	// purposes).
+	existing, err := s.translationRepo.GetChatPref(deviceID, request.ChatJID)
+	if err != nil {
+		return domainTranslation.ChatPrefResponse{}, fmt.Errorf("read chat pref: %w", err)
+	}
+	merged := domainTranslation.ChatPref{DeviceID: deviceID, ChatJID: request.ChatJID}
+	if existing != nil {
+		merged.TargetLang = existing.TargetLang
+		merged.AutoTranslateInbound = existing.AutoTranslateInbound
+		merged.AutoTranslateOutbound = existing.AutoTranslateOutbound
+	}
+	if request.TargetLang != nil {
+		merged.TargetLang = strings.TrimSpace(*request.TargetLang)
+	}
+	if request.AutoTranslateInbound != nil {
+		merged.AutoTranslateInbound = *request.AutoTranslateInbound
+	}
+	if request.AutoTranslateOutbound != nil {
+		merged.AutoTranslateOutbound = *request.AutoTranslateOutbound
+	}
+
+	if err := s.translationRepo.UpsertChatPref(&merged); err != nil {
+		return domainTranslation.ChatPrefResponse{}, fmt.Errorf("save chat pref: %w", err)
+	}
+
+	return domainTranslation.ChatPrefResponse{
+		ChatJID:               merged.ChatJID,
+		TargetLang:            merged.TargetLang,
+		EffectiveTargetLang:   s.resolveTargetLang(deviceID, merged.ChatJID, ""),
+		AutoTranslateInbound:  merged.AutoTranslateInbound,
+		AutoTranslateOutbound: merged.AutoTranslateOutbound,
+	}, nil
+}
+
 // ensureReady verifies the feature is configured. Without it, the rest of the
 // app boots but translation endpoints return a clear 4xx-style error.
 func (s *serviceTranslation) ensureReady() error {

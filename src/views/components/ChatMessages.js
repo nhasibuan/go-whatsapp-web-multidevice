@@ -24,6 +24,20 @@ export default {
       // Default target language for newly opened translations. Persisted in
       // localStorage so the user's pick sticks across reloads.
       defaultTargetLang: localStorage.getItem('translationTargetLang') || 'en',
+      // Per-chat translation preferences fetched from the server. Shape mirrors
+      // the ChatPrefResponse DTO. Null until first fetch for the current JID.
+      chatPrefs: null,
+      // Working copy used by the prefs panel form. Decoupled from chatPrefs so
+      // unsaved edits don't trigger downstream effects (e.g. auto-translate).
+      chatPrefsDraft: { target_lang: '', auto_translate_inbound: false, auto_translate_outbound: false },
+      chatPrefsOpen: false,
+      chatPrefsSaving: false,
+      // Inline auto-translation cache used when auto_translate_inbound is on.
+      // Keyed by message id so we can re-render without refetching. Only the
+      // 'natural' suggestion is shown inline; all 3 stay reachable via the
+      // globe icon.
+      autoTranslations: {},
+      autoTranslateBatchInFlight: false,
     };
   },
   computed: {
@@ -105,6 +119,15 @@ export default {
         } else {
           // Auto-download media for loaded messages
           this.downloadAllMediaInMessages();
+          // Fetch per-chat translation prefs once per chat. The result drives
+          // both the settings panel and (when on) the auto-translate-inbound
+          // pre-fetch below. Errors are non-fatal — they just mean the panel
+          // shows blank and auto-translate stays off.
+          this.fetchChatPrefs().then(() => {
+            if (this.chatPrefs && this.chatPrefs.auto_translate_inbound) {
+              this.runAutoTranslateForVisibleMessages();
+            }
+          });
         }
       } catch (error) {
         showErrorInfo(
@@ -145,6 +168,12 @@ export default {
       this.downloadingMedia.clear();
       this.mediaDownloadErrors = {};
       this.currentDownloads = 0;
+      // Translation state
+      this.translations = {};
+      this.chatPrefs = null;
+      this.chatPrefsOpen = false;
+      this.autoTranslations = {};
+      this.autoTranslateBatchInFlight = false;
     },
     formatTimestamp(timestamp) {
       if (!timestamp) return "N/A";
@@ -542,6 +571,140 @@ export default {
       }
       showSuccessInfo('Translation copied to clipboard');
     },
+    // ----- Per-chat preferences -----
+    async fetchChatPrefs() {
+      // Reset before fetch so a slow request can't bleed into a different chat.
+      this.chatPrefs = null;
+      try {
+        const response = await window.http.get(
+          `/chat/${encodeURIComponent(this.formattedJid)}/translation-prefs`
+        );
+        const r = response.data?.results || {};
+        this.chatPrefs = {
+          chat_jid: r.chat_jid || this.formattedJid,
+          target_lang: r.target_lang || '',
+          effective_target_lang: r.effective_target_lang || this.defaultTargetLang,
+          auto_translate_inbound: !!r.auto_translate_inbound,
+          auto_translate_outbound: !!r.auto_translate_outbound,
+        };
+        // Sync the working draft used by the panel form.
+        this.chatPrefsDraft = {
+          target_lang: this.chatPrefs.target_lang,
+          auto_translate_inbound: this.chatPrefs.auto_translate_inbound,
+          auto_translate_outbound: this.chatPrefs.auto_translate_outbound,
+        };
+      } catch (err) {
+        // Silently degrade — the panel will show blanks and auto-translate
+        // stays off. Most likely cause is the translation feature being
+        // disabled server-side, which is a valid configuration.
+        console.warn('chat translation prefs fetch failed:', err?.response?.data?.message || err);
+      }
+    },
+    toggleChatPrefsPanel() {
+      this.chatPrefsOpen = !this.chatPrefsOpen;
+    },
+    async saveChatPrefs() {
+      if (this.chatPrefsSaving) return;
+      this.chatPrefsSaving = true;
+      try {
+        const payload = {
+          target_lang: (this.chatPrefsDraft.target_lang || '').trim(),
+          auto_translate_inbound: !!this.chatPrefsDraft.auto_translate_inbound,
+          auto_translate_outbound: !!this.chatPrefsDraft.auto_translate_outbound,
+        };
+        const response = await window.http.put(
+          `/chat/${encodeURIComponent(this.formattedJid)}/translation-prefs`,
+          payload
+        );
+        const r = response.data?.results || {};
+        const previous = this.chatPrefs;
+        this.chatPrefs = {
+          chat_jid: r.chat_jid || this.formattedJid,
+          target_lang: r.target_lang || '',
+          effective_target_lang: r.effective_target_lang || this.defaultTargetLang,
+          auto_translate_inbound: !!r.auto_translate_inbound,
+          auto_translate_outbound: !!r.auto_translate_outbound,
+        };
+        showSuccessInfo('Chat translation preferences saved');
+        // If the user just turned on auto-translate-inbound (or changed the
+        // target lang while it's already on), re-prefetch translations for
+        // the visible page. The cache makes repeats free.
+        const langChanged = previous && previous.effective_target_lang !== this.chatPrefs.effective_target_lang;
+        if (this.chatPrefs.auto_translate_inbound && (langChanged || !previous?.auto_translate_inbound)) {
+          if (langChanged) {
+            // Different lang means existing cached UI translations are stale.
+            this.autoTranslations = {};
+          }
+          this.runAutoTranslateForVisibleMessages();
+        }
+        if (!this.chatPrefs.auto_translate_inbound) {
+          // Clear inline translations when turning the feature off.
+          this.autoTranslations = {};
+        }
+      } catch (err) {
+        showErrorInfo(err.response?.data?.message || 'Failed to save preferences');
+      } finally {
+        this.chatPrefsSaving = false;
+      }
+    },
+    // ----- Auto-translate (inbound) -----
+    async runAutoTranslateForVisibleMessages() {
+      // Idempotent: bail out if a batch is already running for this page so
+      // a quick re-render doesn't double-fire calls. Cache makes repeats
+      // free anyway, but this keeps the network panel quiet in dev.
+      if (this.autoTranslateBatchInFlight) return;
+      if (!this.chatPrefs || !this.chatPrefs.auto_translate_inbound) return;
+      const targets = this.messages.filter(m =>
+        !m.is_from_me &&
+        this.isTranslatable(m) &&
+        !this.autoTranslations[m.id]
+      );
+      if (targets.length === 0) return;
+
+      this.autoTranslateBatchInFlight = true;
+      const concurrency = 3;
+      const queue = [...targets];
+      const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+        while (queue.length > 0) {
+          const m = queue.shift();
+          if (!m) continue;
+          await this.fetchAutoTranslation(m);
+        }
+      });
+      try {
+        await Promise.all(workers);
+      } finally {
+        this.autoTranslateBatchInFlight = false;
+      }
+    },
+    async fetchAutoTranslation(message) {
+      try {
+        const lang = (this.chatPrefs?.effective_target_lang || this.defaultTargetLang || 'en').trim();
+        const response = await window.http.post(
+          `/message/${encodeURIComponent(message.id)}/translate`,
+          { chat_jid: this.formattedJid, target_lang: lang }
+        );
+        const r = response.data?.results || {};
+        // Prefer the 'natural' suggestion for the inline display since it's
+        // the most readable; fall back to whatever came back first.
+        const list = Array.isArray(r.suggestions) ? r.suggestions : [];
+        const natural = list.find(s => (s.variant || '').toLowerCase() === 'natural') || list[0];
+        if (natural && natural.text) {
+          this.autoTranslations[message.id] = {
+            text: natural.text,
+            target_lang: r.target_lang || lang,
+            cache_hit: !!r.cache_hit,
+          };
+        }
+      } catch (err) {
+        // Per-message failures are non-fatal — the user can still hit the
+        // globe icon to see the full 3-card panel and any error there.
+        console.warn('auto-translate failed for', message.id, err?.response?.data?.message || err);
+      }
+    },
+    getAutoTranslation(messageId) {
+      return this.autoTranslations[messageId] || null;
+    },
   },
   mounted() {
     // Expose the openModal method globally for ChatList component to call
@@ -651,6 +814,75 @@ export default {
                     <i class="refresh icon"></i>
                     Reset
                 </button>
+                <button v-if="messages.length > 0"
+                        class="ui basic button"
+                        :class="{'teal': chatPrefsOpen}"
+                        @click="toggleChatPrefsPanel">
+                    <i class="cog icon"></i>
+                    Translation settings
+                </button>
+            </div>
+
+            <!-- Per-chat translation preferences panel -->
+            <div v-if="chatPrefsOpen && messages.length > 0"
+                 class="ui segment" style="margin-top: 0.5em; background: #fafafa;">
+                <div class="ui small header">
+                    <i class="globe icon"></i>
+                    Translation preferences for {{ formattedJid }}
+                    <div class="sub header" style="font-weight: normal;">
+                        Effective target: <code>{{ chatPrefs?.effective_target_lang || defaultTargetLang }}</code>
+                        <span v-if="!chatPrefs?.target_lang" style="color: #888;">
+                            (using global default — set a per-chat override below)
+                        </span>
+                    </div>
+                </div>
+                <div class="ui form" style="margin-top: 0.5em;">
+                    <div class="fields">
+                        <div class="six wide field">
+                            <label>Per-chat target language</label>
+                            <select v-model="chatPrefsDraft.target_lang" class="ui dropdown">
+                                <option value="">Use global default</option>
+                                <option value="en">English</option>
+                                <option value="id">Indonesian</option>
+                                <option value="ja">Japanese</option>
+                                <option value="zh">Chinese</option>
+                                <option value="es">Spanish</option>
+                                <option value="fr">French</option>
+                                <option value="de">German</option>
+                                <option value="pt">Portuguese</option>
+                                <option value="ar">Arabic</option>
+                                <option value="ko">Korean</option>
+                                <option value="ru">Russian</option>
+                                <option value="vi">Vietnamese</option>
+                            </select>
+                        </div>
+                        <div class="five wide field">
+                            <label>&nbsp;</label>
+                            <div class="ui toggle checkbox">
+                                <input type="checkbox" v-model="chatPrefsDraft.auto_translate_inbound">
+                                <label>Auto-translate inbound messages</label>
+                            </div>
+                            <div style="color: #888; font-size: 0.85em; margin-top: 0.25em;">
+                                Shows the natural translation under each non-self message on this page.
+                            </div>
+                        </div>
+                        <div class="five wide field">
+                            <label>&nbsp;</label>
+                            <div class="ui toggle checkbox">
+                                <input type="checkbox" v-model="chatPrefsDraft.auto_translate_outbound">
+                                <label>Auto-translate outbound (reserved)</label>
+                            </div>
+                            <div style="color: #888; font-size: 0.85em; margin-top: 0.25em;">
+                                Stored for future compose-assist integration.
+                            </div>
+                        </div>
+                    </div>
+                    <button class="ui small teal button"
+                            :class="{'loading disabled': chatPrefsSaving}"
+                            @click="saveChatPrefs">
+                        <i class="save icon"></i> Save preferences
+                    </button>
+                </div>
             </div>
             
             <div v-if="loading" class="ui active centered inline loader"></div>
@@ -703,6 +935,14 @@ export default {
                             </div>
                             <div class="description">
                                 <p>{{ getMessageContent(message) }}</p>
+                                <!-- Inline auto-translation (when auto_translate_inbound is on). -->
+                                <div v-if="getAutoTranslation(message.id)"
+                                     style="margin-top: 0.25em; padding: 0.4em 0.6em; background: #f3f9ff; border-left: 3px solid #2185d0; border-radius: 3px; font-size: 0.92em;">
+                                    <span style="color: #2185d0; font-weight: 600; font-size: 0.78em; text-transform: uppercase; letter-spacing: 0.05em;">
+                                        <i class="globe icon" style="margin: 0 0.3em 0 0;"></i>{{ getAutoTranslation(message.id).target_lang }}
+                                    </span>
+                                    {{ getAutoTranslation(message.id).text }}
+                                </div>
                                 <div v-if="message.media_type && message.url" class="media-container" style="margin-top: 0.5em;">
                                     <div v-if="getMediaDisplay(message)" v-html="getMediaDisplay(message).content"></div>
                                 </div>
